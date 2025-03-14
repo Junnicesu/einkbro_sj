@@ -3,4 +3,4 @@
 - The original EinkBro project: https://github.com/plateaukao/einkbro.git
 
 # sj study: 
-- Try GitHub Action CI/CD, Update Secrets
+- Try GitHub Action CI/CD, Update Secrets of KeyStore by trimming the '\r\n'
