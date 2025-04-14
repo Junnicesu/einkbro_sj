@@ -80,6 +80,7 @@ import info.plateaukao.einkbro.database.Record
 import info.plateaukao.einkbro.database.RecordDb
 import info.plateaukao.einkbro.databinding.ActivityMainBinding
 import info.plateaukao.einkbro.epub.EpubManager
+import info.plateaukao.einkbro.epub.EpubReaderView
 import info.plateaukao.einkbro.preference.AlbumInfo
 import info.plateaukao.einkbro.preference.ConfigManager
 import info.plateaukao.einkbro.preference.DarkMode
@@ -1218,7 +1219,11 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
     override fun rotateScreen() = IntentUnit.rotateScreen(this)
 
     override fun saveBookmark(url: String?, title: String?) {
-        val currentUrl = url ?: ebWebView.url ?: return
+        val currentUrl: String = url ?: when (ebWebView) {
+            is EpubReaderView -> (ebWebView as EpubReaderView).sUri
+            is EBWebView -> ebWebView.url
+            else -> return
+        } ?: return
         var nonNullTitle = title ?: HelperUnit.secString(ebWebView.title)
         try {
             lifecycleScope.launch {

@@ -37,6 +37,7 @@ class EpubReaderView(
     browserController: BrowserController?
 ) : EBWebView(context, browserController) {
     private lateinit var book: Book
+    var sUri: String = ""
     private val chapterList: ArrayList<Chapter> = ArrayList()
     var chapterNumber = 0
     var progress = 0f
@@ -283,9 +284,11 @@ elements[i].style.color='white';
     }
 
     suspend fun openEpubFile(uri: Uri) {
+
         withContext(IO) {
             try {
                 context.contentResolver.openInputStream(uri).use { epubInputStream ->
+                    this@EpubReaderView.sUri = uri.toString()
                     this@EpubReaderView.book = EpubReader().readEpub(epubInputStream)
                     val book = this@EpubReaderView.book
                     webViewClient.book = book // for loading image resources
@@ -305,9 +308,9 @@ elements[i].style.color='white';
                     }
                     chapterList.clear()
 
-                    if (resourceLocation.contains("OEPBS") && book.tableOfContents.tocReferences.size > 1)
+                    if (resourceLocation.contains("OEPBS") && book.tableOfContents.tocReferences.size > 1) {
                         processChaptersByTOC(book.tableOfContents.tocReferences)
-                    else if (book.tableOfContents.tocReferences.size > 1) {
+                    } else if (book.tableOfContents.tocReferences.size > 1) {
                         processChaptersByTOC(book.tableOfContents.tocReferences)
                     } else processChaptersBySpline(book.spine)
                 }
