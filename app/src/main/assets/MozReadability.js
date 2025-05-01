@@ -415,6 +415,9 @@ Readability.prototype = {
    * @return void
    */
   _cleanClasses(node) {
+    if (node._preserveClasses) {
+      return;
+    }
     var classesToPreserve = this._classesToPreserve;
     var className = (node.getAttribute("class") || "")
       .split(/\s+/)
@@ -666,6 +669,37 @@ Readability.prototype = {
     }
 
     this._replaceNodeTags(this._getAllNodesWithTag(doc, ["font"]), "SPAN");
+  },
+
+  /**
+   * Mark code blocks to preserve their styles and classes.
+   *
+   * @return void
+   */
+  _markCodeBlocks() {
+    var divs = this._getAllNodesWithTag(this._doc, ["div"]);
+    this._forEachNode(divs, function(div) {
+      if (div.children.length === 1 && div.children[0].tagName === "CODE") {
+        div._isCodeBlock = true;
+        this._preserveStylesAndClasses(div);
+      }
+    });
+  },
+
+  /**
+   * Preserve styles and classes on a node and its descendants.
+   *
+   * @param Element node
+   * @return void
+   */
+  _preserveStylesAndClasses(node) {
+    node._preserveStyles = true;
+    node._preserveClasses = true;
+    var child = node.firstElementChild;
+    while (child) {
+      this._preserveStylesAndClasses(child);
+      child = child.nextElementSibling;
+    }
   },
 
   /**
@@ -2078,14 +2112,14 @@ Readability.prototype = {
   },
 
   /**
-   * Remove the style attribute on every e and under.
+   * Remove the style attribute on every e and under unless marked to preserve.
    * TODO: Test if getElementsByTagName(*) is faster.
    *
    * @param Element
    * @return void
    **/
   _cleanStyles(e) {
-    if (!e || e.tagName.toLowerCase() === "svg") {
+    if (!e || e.tagName.toLowerCase() === "svg" || e._preserveStyles) {
       return;
     }
 
@@ -2443,6 +2477,11 @@ Readability.prototype = {
     //
     // TODO: Consider taking into account original contentScore here.
     this._removeNodes(this._getAllNodesWithTag(e, [tag]), function (node) {
+      // Don't remove if it's a code block div
+      if (tag === "div" && node._isCodeBlock) {
+        return false;
+      }
+
       // First check if this node IS data table, in which case don't remove it.
       var isDataTable = function (t) {
         return t._readabilityDataTable;
@@ -2740,6 +2779,7 @@ Readability.prototype = {
     this._removeScripts(this._doc);
 
     this._prepDocument();
+    this._markCodeBlocks();
 
     var metadata = this._getArticleMetadata(jsonLd);
     this._metadata = metadata;
