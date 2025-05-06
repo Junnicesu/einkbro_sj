@@ -234,6 +234,14 @@ class EpubManager(private val context: Context) : KoinComponent {
         baseUri: String,
     ): Pair<String, Map<String, String>> {
         val doc = Jsoup.parse(html, baseUri)
+
+        // Disable pretty-printing to preserve whitespace and newlines
+        doc.outputSettings().prettyPrint(false)
+
+        // for generating html elements with end tag.
+        doc.outputSettings().syntax(Document.OutputSettings.Syntax.html);
+        doc.outputSettings().escapeMode(Entities.EscapeMode.xhtml);
+
         with(doc.head().allElements) {
             select("link").remove()
             select("meta").remove()
@@ -262,9 +270,6 @@ class EpubManager(private val context: Context) : KoinComponent {
             }
         }
 
-        // for generating html elements with end tag.
-        doc.outputSettings().syntax(Document.OutputSettings.Syntax.xml);
-        doc.outputSettings().escapeMode(Entities.EscapeMode.xhtml);
         return Pair(doc.toString(), imageKeyUrlMap)
     }
 
