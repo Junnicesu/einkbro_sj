@@ -329,6 +329,7 @@ elements[i].style.color='white';
                 while (r.readLine().also { aux = it } != null) {
                     aux = aux?.replace("""src="img""", """src="img://img""")
                     builder.append(aux)
+                    builder.append("\n") // Add the newline back
                 }
             } catch (e: Exception) {
             }
@@ -350,6 +351,7 @@ elements[i].style.color='white';
                     while (r.readLine().also { aux = it } != null) {
                         aux = aux?.replace("""src="img""", """src="img://img""")
                         builder.append(aux)
+                        builder.append("\n") // Add the newline back
                     }
                 } catch (e: Exception) {
                     e.printStackTrace()
