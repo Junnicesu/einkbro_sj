@@ -72,6 +72,7 @@ import info.plateaukao.einkbro.R
 import info.plateaukao.einkbro.browser.AlbumController
 import info.plateaukao.einkbro.browser.BrowserContainer
 import info.plateaukao.einkbro.browser.BrowserController
+import info.plateaukao.einkbro.browser.ChatWebInterface
 import info.plateaukao.einkbro.database.Article
 import info.plateaukao.einkbro.database.Bookmark
 import info.plateaukao.einkbro.database.BookmarkManager
@@ -168,6 +169,7 @@ import io.github.edsuns.adfilter.AdFilter
 import io.github.edsuns.adfilter.FilterViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.koin.android.ext.android.inject
 import java.io.File
 import java.util.Locale
@@ -800,6 +802,21 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
         }
     }
 
+    override fun chatWithWeb(useSplitScreen: Boolean) {
+        lifecycleScope.launch {
+            val rawText = ebWebView.getRawText()
+            withContext(Dispatchers.Main) {
+                if (useSplitScreen) {
+                    maybeInitTwoPaneController()
+                    twoPaneController.showSecondPaneAsAi(rawText)
+                } else {
+                    addAlbum("Chat With Web")
+                    ebWebView.setupAiPage(this@BrowserActivity.lifecycleScope, rawText)
+                }
+            }
+        }
+    }
+
     private fun showTranslationDialog() {
         TranslateDialogFragment(
             translationViewModel,
@@ -1232,7 +1249,8 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
                     bookmarkViewModel,
                     Bookmark(
                         nonNullTitle.pruneWebTitle(),
-                        currentUrl, order = if (ViewUnit.isWideLayout(this@BrowserActivity)) 999 else 0),
+                        currentUrl, order = if (ViewUnit.isWideLayout(this@BrowserActivity)) 999 else 0
+                    ),
                     {
                         handleBookmarkSync(true)
                         ViewUnit.hideKeyboard(this@BrowserActivity)
@@ -2004,6 +2022,7 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
         val albumControllers = browserContainer.list()
         val albumInfoList = albumControllers
             .filter { !it.isTranslatePage }
+            .filter { !it.isAIPage }
             .filter { !it.albumUrl.startsWith("data") }
             .filter {
                 (it.albumUrl.isNotBlank() && it.albumUrl != BrowserUnit.URL_ABOUT_BLANK) ||

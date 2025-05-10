@@ -119,6 +119,10 @@ class OpenAiRepository : KoinComponent {
         doneAction: () -> Unit = {},
         failureAction: () -> Unit,
     ) {
+        if (config.geminiApiKey.isEmpty()) {
+            appendResponseAction("no gemini api key")
+            return
+        }
         val request = createGeminiRequest(messages, gptActionInfo, true)
         try {
             client.newCall(request).execute().use { response ->
@@ -198,6 +202,10 @@ class OpenAiRepository : KoinComponent {
     suspend fun queryGemini(messages: List<ChatMessage>, gptActionInfo: ChatGPTActionInfo): String {
         return withContext(Dispatchers.IO) {
             try {
+                if (config.geminiApiKey.isEmpty()) {
+                    return@withContext "no gemini api key"
+                }
+
                 val request = createGeminiRequest(messages, gptActionInfo, false)
                 val response: Response = client.newCall(request).execute()
                 if (!response.isSuccessful) {
@@ -290,7 +298,6 @@ class OpenAiRepository : KoinComponent {
 
     private fun createTtsRequest(
         text: String,
-        hd: Boolean = false,
         speed: Double = 1.0,
         voiceOption: GptVoiceOption = GptVoiceOption.Alloy,
     ): Request = Request.Builder()
@@ -299,9 +306,10 @@ class OpenAiRepository : KoinComponent {
             json.encodeToString(
                 TTSRequest(
                     text,
-                    if (hd) "tts-1-hd" else "tts-1",
+                    config.gptVoiceModel,
                     voiceOption.name.lowercase(Locale("en")),
-                    speed
+                    speed,
+                    instructions = config.gptVoicePrompt
                 )
             )
                 .toRequestBody(mediaType)
@@ -398,6 +406,7 @@ data class TTSRequest(
     val voice: String,
     val speed: Double = 1.0,
     val format: String = "aac",
+    val instructions: String = "",
 )
 
 enum class GptVoiceOption {
