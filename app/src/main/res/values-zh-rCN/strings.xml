@@ -420,7 +420,6 @@
     <string name="setting_title_userAgent_toggle">启用自定义用户代理</string>
     <string name="setting_summary_userAgent">在此输入自定义用户代理字符串。</string>
     <string name="setting_summary_userAgent_toggle">启用自定义用户代理</string>
-    <string name="menu_add_to_pocket">添加到Pocket</string>
     <string name="content_adjustment">重排类</string>
     <string name="share_save"><![CDATA[分享保存类]]></string>
 
@@ -462,7 +461,7 @@
     <string name="setting_summary_dual_caption">选择第二标题语言</string>
     <string name="naver_translate">Naver翻译</string>
     <string name="setting_title_gpt_model_name">OpenAI模型名称</string>
-    <string name="setting_summary_gpt_model_name">默认设置为gpt-3.5-turbo。必要时填写其他模型名称。</string>
+    <string name="setting_summary_gpt_model_name">默认设置为gpt-4.1。必要时填写其他模型名称。</string>
     <string name="split_search">拆分搜索</string>
     <string name="split_search_settings">拆分搜索设置</string>
     <string name="setting_title_split_search_setting">拆分搜索设置</string>
@@ -578,4 +577,27 @@
     <string name="setting_title_reader_mode_padding">Padding for reader mode</string>
     <string name="setting_summary_reader_mode_padding">Padding value (in px) for reader mode, default value is 10</string>
     <string name="iansui_tc">iansui(TC)</string>
+    <string name="gemini_translate_by_paragraph">Gemini by Paragraph</string>
+    <string name="setting_title_gpt_prompt_for_tts">audio output instructions</string>
+    <string name="setting_summary_gpt_prompt_for_tts">instructions when gpt-4o-mini-tts model is used.</string>
+    <string name="setting_title_gpt_audio_model_name">OpenAI TTS model name</string>
+    <string name="setting_summary_gpt_audio_model_name">Available options: tts-1 (default), tts-1-hd, gpt-4o-mini-tts</string>
+    <string name="chat_with_web">Chat With Web</string>
+    <string name="web_content_processing">Web Content Processing</string>
+    <string name="web_processing_gpt_type">What Gpt engine will be used</string>
+    <string name="setting_summary_web_processing_gpt_type">Choose the engine to process web content</string>
+    <string name="self_hosted">Self Hosted</string>
+    <string name="summary_gpt_type">Gpt type for summary web content</string>
+    <string name="setting_summary_summary_gpt_type">Choose gpt engine for content summarization</string>
+    <string name="menu_summarize">Summarize</string>
+    <string name="setting_title_remote_query">Remote Query Action</string>
+    <string name="sc_disable_adblock_short">No AdBlock</string>
+    <string name="sc_disable_adblock_long">No AdBlock</string>
+    <string name="sc_disable_adblock_disabled">No AdBlock</string>
+    <string name="setting_summary_nav_pos_reset_custom">Reset custom position</string>
+    <string name="setting_title_enable_url_drag_to_action">1 touch to url action</string>
+    <string name="setting_summary_enable_url_drag_to_action">Long click on url and move to action items</string>
+    <string name="suggestion">"Search: "</string>
+    <string name="setting_title_search_suggestion">Search suggestions</string>
+    <string name="setting_summary_search_suggestion">"while inputting content, show search suggestions "</string>
 </resources>

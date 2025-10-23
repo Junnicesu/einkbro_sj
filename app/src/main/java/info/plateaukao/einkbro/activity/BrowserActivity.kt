@@ -43,7 +43,6 @@ import android.webkit.CookieManager
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient.CustomViewCallback
 import android.webkit.WebView
-import android.webkit.WebView.HitTestResult
 import android.widget.FrameLayout
 import android.widget.ImageButton
 import android.widget.ProgressBar
@@ -67,7 +66,6 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.isVisible
 import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.lifecycleScope
-import com.google.android.material.snackbar.Snackbar
 import info.plateaukao.einkbro.R
 import info.plateaukao.einkbro.browser.AlbumController
 import info.plateaukao.einkbro.browser.BrowserContainer
@@ -82,14 +80,17 @@ import info.plateaukao.einkbro.databinding.ActivityMainBinding
 import info.plateaukao.einkbro.epub.EpubManager
 import info.plateaukao.einkbro.epub.EpubReaderView
 import info.plateaukao.einkbro.preference.AlbumInfo
+import info.plateaukao.einkbro.preference.ChatGPTActionInfo
 import info.plateaukao.einkbro.preference.ConfigManager
 import info.plateaukao.einkbro.preference.DarkMode
 import info.plateaukao.einkbro.preference.FabPosition
 import info.plateaukao.einkbro.preference.FontType
+import info.plateaukao.einkbro.preference.GptActionDisplay
 import info.plateaukao.einkbro.preference.HighlightStyle
 import info.plateaukao.einkbro.preference.NewTabBehavior
 import info.plateaukao.einkbro.preference.TranslationMode
 import info.plateaukao.einkbro.preference.toggle
+import info.plateaukao.einkbro.search.suggestion.SearchSuggestionViewModel
 import info.plateaukao.einkbro.service.ClearService
 import info.plateaukao.einkbro.unit.BackupUnit
 import info.plateaukao.einkbro.unit.BrowserUnit
@@ -112,7 +113,6 @@ import info.plateaukao.einkbro.view.dialog.BookmarkEditDialog
 import info.plateaukao.einkbro.view.dialog.DialogManager
 import info.plateaukao.einkbro.view.dialog.ReceiveDataDialog
 import info.plateaukao.einkbro.view.dialog.SendLinkDialog
-import info.plateaukao.einkbro.view.dialog.ShortcutEditDialog
 import info.plateaukao.einkbro.view.dialog.TextInputDialog
 import info.plateaukao.einkbro.view.dialog.TranslationLanguageDialog
 import info.plateaukao.einkbro.view.dialog.TtsLanguageDialog
@@ -156,9 +156,7 @@ import info.plateaukao.einkbro.viewmodel.AlbumViewModel
 import info.plateaukao.einkbro.viewmodel.BookmarkViewModel
 import info.plateaukao.einkbro.viewmodel.BookmarkViewModelFactory
 import info.plateaukao.einkbro.viewmodel.ExternalSearchViewModel
-import info.plateaukao.einkbro.viewmodel.PocketShareState
-import info.plateaukao.einkbro.viewmodel.PocketViewModel
-import info.plateaukao.einkbro.viewmodel.PocketViewModelFactory
+import info.plateaukao.einkbro.viewmodel.InstapaperViewModel
 import info.plateaukao.einkbro.viewmodel.RemoteConnViewModel
 import info.plateaukao.einkbro.viewmodel.SplitSearchViewModel
 import info.plateaukao.einkbro.viewmodel.TRANSLATE_API
@@ -167,7 +165,10 @@ import info.plateaukao.einkbro.viewmodel.TtsViewModel
 import io.github.edsuns.adfilter.AdFilter
 import io.github.edsuns.adfilter.FilterViewModel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.Json
 import org.koin.android.ext.android.inject
 import java.io.File
 import java.util.Locale
@@ -207,6 +208,12 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
     private val remoteConnViewModel: RemoteConnViewModel by viewModels()
 
     private val externalSearchViewModel: ExternalSearchViewModel by viewModels()
+
+    private val instapaperViewModel: InstapaperViewModel by viewModels()
+
+    private val searchSuggestionViewModel: SearchSuggestionViewModel by inject()
+
+    private val keyHandler: KeyHandler by lazy { KeyHandler(this, ebWebView, config) }
 
     private fun prepareRecord(): Boolean {
         val webView = currentAlbumController as EBWebView
@@ -354,6 +361,7 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
         initOverview()
         initTouchArea()
         initActionModeViewModel()
+        initInstapaperViewModel()
 
         downloadReceiver = createDownloadReceiver(this)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -562,7 +570,16 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
                                 translationViewModel.setupGptAction(gptAction)
                                 translationViewModel.url = getFocusedWebView().url.orEmpty()
 
-                                showTranslationDialog()
+                                when (gptAction.display) {
+                                    GptActionDisplay.Popup -> showTranslationDialog()
+                                    GptActionDisplay.NewTab -> {
+                                        chatWithWeb(false, actionModeMenuViewModel.selectedText.value, gptAction)
+                                    }
+
+                                    GptActionDisplay.SplitScreen -> {
+                                        chatWithWeb(true, actionModeMenuViewModel.selectedText.value, gptAction)
+                                    }
+                                }
                             } else {
                                 EBToast.show(this@BrowserActivity, R.string.gpt_api_key_not_set)
                             }
@@ -617,6 +634,21 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
                 } else {
                     view.visibility = INVISIBLE
                 }
+            }
+        }
+    }
+
+    private fun initInstapaperViewModel() {
+        lifecycleScope.launch {
+            instapaperViewModel.uiState.collect { state ->
+                if (state.showConfigureDialog) {
+                    configureInstapaper()
+                } else if (state.successMessage != null) {
+                    EBToast.show(this@BrowserActivity, state.successMessage)
+                } else if (state.errorMessage != null) {
+                    EBToast.show(this@BrowserActivity, state.errorMessage)
+                }
+                instapaperViewModel.resetState()
             }
         }
     }
@@ -703,32 +735,6 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
         ebWebView.dispatchKeyEvent(KeyEvent(ACTION_DOWN, KeyEvent.KEYCODE_DPAD_RIGHT))
     }
 
-    override fun addToPocket(url: String) {
-        lifecycleScope.launch {
-            when (val sharedState =
-                pocketViewModel.shareToPocketWithLoginCheck(this@BrowserActivity, url)) {
-                is PocketShareState.SharedByEinkBro -> {
-                    Snackbar.make(binding.root, "Added", Snackbar.LENGTH_LONG).apply {
-                        setAction("Go to Pocket article url") {
-                            addNewTab(sharedState.pocketUrl)
-                        }
-                    }.show()
-                }
-
-                is PocketShareState.NeedLogin -> addNewTab(sharedState.authUrl)
-                PocketShareState.Failed -> EBToast.showShort(this@BrowserActivity, "Failed")
-                PocketShareState.SharedByPocketApp -> Unit // done by pocket app
-            }
-        }
-    }
-
-    override fun handlePocketRequestToken(requestToken: String) {
-        lifecycleScope.launch {
-            pocketViewModel.getAndSaveAccessToken()
-            addToPocket(pocketViewModel.urlToBeAdded)
-        }
-    }
-
     override fun translate(translationMode: TranslationMode) {
         when (translationMode) {
             TranslationMode.TRANSLATE_BY_PARAGRAPH -> translateByParagraph(TRANSLATE_API.GOOGLE)
@@ -784,6 +790,33 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
         SendLinkDialog(this, lifecycleScope).show(text)
     }
 
+    private val linkContentWebView: EBWebView by lazy {
+        EBWebView(this, this).apply {
+            setOnPageFinishedAction {
+                lifecycleScope.launch {
+                    val content = linkContentWebView.getRawText()
+                    loadUrl("about:blank")
+                    if (content.isNotEmpty()) {
+                        val isSuccess = translationViewModel.setupTextSummary(content)
+                        if (!isSuccess) {
+                            EBToast.show(this@BrowserActivity, R.string.gpt_api_key_not_set)
+                            return@launch
+                        }
+
+                        showTranslationDialog()
+                    }
+                }
+            }
+        }
+    }
+
+    private fun summarizeLinkContent(url: String) {
+        if (translationViewModel.hasOpenAiApiKey()) {
+            translationViewModel.url = url
+            linkContentWebView.loadUrl(url)
+        }
+    }
+
     override fun summarizeContent() {
         if (translationViewModel.hasOpenAiApiKey()) {
             lifecycleScope.launch {
@@ -800,13 +833,61 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
         }
     }
 
+    override fun chatWithWeb(useSplitScreen: Boolean, content: String?, runWithAction: ChatGPTActionInfo?) {
+        lifecycleScope.launch {
+            val rawText = content ?: ebWebView.getRawText()
+            withContext(Dispatchers.Main) {
+                val scope = this@BrowserActivity.lifecycleScope
+                if (useSplitScreen) {
+                    maybeInitTwoPaneController()
+                    // get current web title/url
+                    val webTitle = ebWebView.title ?: "No Title"
+                    val webUrl = ebWebView.url.orEmpty()
+                    // add new tab
+                    twoPaneController.showSecondPaneAsAi(rawText, webTitle, webUrl)
+                    runWithAction?.let { twoPaneController.runGptAction(it) }
+                } else {
+                    // get current web title/url
+                    val webTitle = ebWebView.title ?: "No Title"
+                    val webUrl = ebWebView.url.orEmpty()
+                    // add new tab
+                    addAlbum("Chat With Web")
+                    ebWebView.setupAiPage(scope, rawText, webTitle, webUrl)
+                    runWithAction?.let { ebWebView.runGptAction(it) }
+                }
+            }
+        }
+    }
+
+    override fun addToInstapaper() {
+        val url = ebWebView.url.orEmpty()
+        if (url.isEmpty()) {
+            EBToast.show(this, R.string.url_empty)
+            return
+        }
+
+        instapaperViewModel.addUrl(
+            url = url,
+            username = config.instapaperUsername,
+            password = config.instapaperPassword,
+            title = ebWebView.title
+        )
+    }
+
+    override fun configureInstapaper() {
+        dialogManager.showInstapaperCredentialsDialog { name, password -> Unit }
+    }
+
     private fun showTranslationDialog() {
+        supportFragmentManager.findFragmentByTag("translateDialog")?.let {
+            supportFragmentManager.beginTransaction().remove(it).commitAllowingStateLoss()
+        }
         TranslateDialogFragment(
             translationViewModel,
             externalSearchWebView,
             actionModeMenuViewModel.clickedPoint.value,
         )
-            .show(supportFragmentManager, "contextMenu")
+            .show(supportFragmentManager, "translateDialog")
     }
 
     override fun invertColors() {
@@ -843,7 +924,22 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
         if (remoteConnViewModel.isReceivingLink) {
             remoteConnViewModel.toggleReceiveLink {}
         } else {
-            remoteConnViewModel.toggleReceiveLink { ebWebView.loadUrl(it) }
+            remoteConnViewModel.toggleReceiveLink {
+                if (it.startsWith("action")) {
+                    val (_, content, actionString) = it.split("|||")
+                    val action = Json.decodeFromString<ChatGPTActionInfo>(actionString)
+                    if (action.display == GptActionDisplay.Popup) {
+                        translationViewModel.setupGptAction(action)
+                        translationViewModel.updateMessageWithContext(content)
+                        translationViewModel.updateInputMessage(content)
+                        showTranslationDialog()
+                    } else {
+                        chatWithWeb(false, content, action)
+                    }
+                } else {
+                    ebWebView.loadUrl(it)
+                }
+            }
         }
     }
 
@@ -972,10 +1068,21 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
         enterPictureInPictureMode(params)
     }
 
+    private var searchJob: Job? = null
     private fun initInputBar() {
         binding.inputUrl.apply {
             focusRequester = FocusRequester()
             onTextSubmit = { updateAlbum(it.trim()); showToolbar() }
+            onTextChange = { query ->
+                searchJob?.cancel()
+                searchJob = lifecycleScope.launch {
+                    kotlinx.coroutines.delay(300) // Debounce for 300ms
+                    withContext(Dispatchers.IO) {
+                        searchSuggestionViewModel.updateSuggestions(query)
+                    }
+                    recordList.value = searchSuggestionViewModel.suggestions.value
+                }
+            }
             onPasteClick = { updateAlbum(getClipboardText()); showToolbar() }
             closeAction = { showToolbar() }
             onRecordClick = {
@@ -1074,52 +1181,7 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
-        when (keyCode) {
-            KeyEvent.KEYCODE_DPAD_DOWN -> {
-                if (config.useUpDownPageTurn) ebWebView.pageDownWithNoAnimation()
-            }
-
-            KeyEvent.KEYCODE_DPAD_UP -> {
-                if (config.useUpDownPageTurn) ebWebView.pageUpWithNoAnimation()
-            }
-
-            KeyEvent.KEYCODE_VOLUME_DOWN -> return handleVolumeDownKey()
-            KeyEvent.KEYCODE_VOLUME_UP -> return handleVolumeUpKey()
-            KeyEvent.KEYCODE_MENU -> {
-                showMenuDialog(); return true
-            }
-
-            KeyEvent.KEYCODE_BACK -> {
-                handleBackKey(); return true
-            }
-        }
-        return false
-    }
-
-    private fun handleVolumeDownKey(): Boolean {
-        return if (config.volumePageTurn) {
-            if (ebWebView.isVerticalRead) {
-                ebWebView.pageUpWithNoAnimation()
-            } else {
-                ebWebView.pageDownWithNoAnimation()
-            }
-            true
-        } else {
-            false
-        }
-    }
-
-    private fun handleVolumeUpKey(): Boolean {
-        return if (config.volumePageTurn) {
-            if (ebWebView.isVerticalRead) {
-                ebWebView.pageDownWithNoAnimation()
-            } else {
-                ebWebView.pageUpWithNoAnimation()
-            }
-            true
-        } else {
-            false
-        }
+        return keyHandler.onKeyDown(keyCode, event) || super.onKeyDown(keyCode, event)
     }
 
     override fun handleBackKey() {
@@ -1191,6 +1253,7 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
 
         progressBar.visibility = GONE
         ebWebView = controller as EBWebView
+        keyHandler.setWebView(ebWebView)
 
         updateTitle()
         ebWebView.updatePageInfo()
@@ -1232,7 +1295,8 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
                     bookmarkViewModel,
                     Bookmark(
                         nonNullTitle.pruneWebTitle(),
-                        currentUrl, order = if (ViewUnit.isWideLayout(this@BrowserActivity)) 999 else 0),
+                        currentUrl, order = if (ViewUnit.isWideLayout(this@BrowserActivity)) 999 else 0
+                    ),
                     {
                         handleBookmarkSync(true)
                         ViewUnit.hideKeyboard(this@BrowserActivity)
@@ -1247,20 +1311,7 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
         }
     }
 
-    override fun createShortcut() {
-        val currentUrl = ebWebView.url ?: return
-        ShortcutEditDialog(
-            this@BrowserActivity,
-            HelperUnit.secString(ebWebView.title),
-            currentUrl,
-            ebWebView.favicon,
-            {
-                ViewUnit.hideKeyboard(this)
-                EBToast.show(this@BrowserActivity, R.string.toast_edit_successful)
-            },
-            { ViewUnit.hideKeyboard(this) }
-        ).show()
-    }
+    override fun createShortcut() = BrowserUnit.createShortcut(this, ebWebView)
 
     override fun toggleTouchTurnPageFeature() = config::enableTouchTurn.toggle()
 
@@ -1338,42 +1389,6 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
             }
         }
     }
-
-//    private fun translateByParagraphInReaderMode(translateApi: TRANSLATE_API) {
-//        lifecycleScope.launch {
-//            val currentUrl = ebWebView.url
-//
-//            // assume it's current one
-//            val translateModeWebView = if (ebWebView.isTranslatePage) {
-//                ebWebView
-//            } else {
-//                // get html from original WebView
-//                val htmlCache = ebWebView.getRawReaderHtml()
-//                // create a new WebView
-//                addAlbum("", "")
-//                // set it to translate mode
-//                ebWebView.isTranslatePage = true
-//                ebWebView.translateApi = translateApi
-//                // set its raw html to be the same as original WebView
-//                ebWebView.rawHtmlCache = htmlCache
-//                // show the language label
-//                languageLabelView?.visibility = VISIBLE
-//                ebWebView
-//            }
-//
-//            val translatedHtml = translationViewModel
-//                .translateByParagraph(translateModeWebView.rawHtmlCache ?: return@launch)
-//            if (translateModeWebView.isAttachedToWindow) {
-//                translateModeWebView.loadDataWithBaseURL(
-//                    if (!ebWebView.isPlainText) currentUrl else null,
-//                    translatedHtml,
-//                    "text/html",
-//                    "utf-8",
-//                    null
-//                )
-//            }
-//        }
-//    }
 
     private fun isTwoPaneControllerInitialized(): Boolean = ::twoPaneController.isInitialized
 
@@ -1463,6 +1478,11 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
 
             "sc_bookmark" -> {
                 addAlbum(); openBookmarkPage()
+            }
+
+            "sc_disable_adblock" -> {
+                config.adBlock = false
+                BrowserUnit.restartApp(this)
             }
 
             Intent.ACTION_SEND -> {
@@ -1632,6 +1652,7 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
     }
 
 
+    private var fabImagePositionChanged = false
     private val preferenceChangeListener =
         SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
             when (key) {
@@ -1737,7 +1758,8 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
                 ConfigManager.K_DARK_MODE -> config.restartChanged = true
                 ConfigManager.K_TOOLBAR_TOP -> ViewUnit.updateAppbarPosition(binding)
 
-                ConfigManager.K_NAV_POSITION -> fabImageViewController.initialize()
+                ConfigManager.K_NAV_POSITION -> config.restartChanged = true
+
                 ConfigManager.K_TTS_SPEED_VALUE ->
                     ttsViewModel.setSpeechRate(config.ttsSpeedValue / 100f)
 
@@ -1768,7 +1790,13 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
             orientation,
             findViewById(R.id.fab_imageButtonNav),
             this::showToolbar,
-            this::showFastToggleDialog
+            longClickAction = {
+                if (config.enableNavButtonGesture) {
+                    gestureHandler.handle(config.navButtonLongClickGesture)
+                } else {
+                    showFastToggleDialog()
+                }
+            }
         )
     }
 
@@ -1792,10 +1820,6 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
 
     private val bookmarkViewModel: BookmarkViewModel by viewModels {
         BookmarkViewModelFactory(bookmarkManager)
-    }
-
-    private val pocketViewModel: PocketViewModel by viewModels {
-        PocketViewModelFactory()
     }
 
     private val actionModeMenuViewModel: ActionModeMenuViewModel by viewModels()
@@ -1851,6 +1875,7 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
 
     private fun initSearchPanel() {
         with(binding.mainSearchPanel) {
+            visibility = INVISIBLE
             onTextChanged = { (currentAlbumController as EBWebView?)?.findAllAsync(it) }
             onCloseClick = { hideSearchPanel() }
             onUpClick = { searchUp(it) }
@@ -1964,7 +1989,6 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
                 webView.initAlbumUrl = url
             }
         } else {
-            showToolbar()
             showAlbum(webView)
             if (url.isNotEmpty() && url != BrowserUnit.URL_ABOUT_BLANK) {
                 webView.loadUrl(url)
@@ -1982,6 +2006,13 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
             override fun onSwipeLeft() = gestureHandler.handle(config.multitouchLeft)
             override fun onLongPressMove(motionEvent: MotionEvent) {
                 super.onLongPressMove(motionEvent)
+
+                // Handle context menu hover selection
+                if (config.enableDragUrlToAction && isInLongPressMode && activeContextMenuDialog != null) {
+                    activeContextMenuDialog?.updateHoveredItem(motionEvent.rawX, motionEvent.rawY)
+                    return
+                }
+
                 if (longPressStartPoint == null) {
                     longPressStartPoint = Point(motionEvent.x.toInt(), motionEvent.y.toInt())
                     return
@@ -1996,6 +2027,13 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
             }
 
             override fun onMoveDone(motionEvent: MotionEvent) {
+                // Handle finger lift for context menu
+                if (isInLongPressMode && activeContextMenuDialog != null) {
+                    activeContextMenuDialog?.onFingerLifted()
+                    activeContextMenuDialog = null
+                    isInLongPressMode = false
+                    return
+                }
                 //Log.d("touch", "onMoveDone")
             }
         }.apply { lifecycle.addObserver(this) }
@@ -2004,6 +2042,7 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
         val albumControllers = browserContainer.list()
         val albumInfoList = albumControllers
             .filter { !it.isTranslatePage }
+            .filter { !it.isAIPage }
             .filter { !it.albumUrl.startsWith("data") }
             .filter {
                 (it.albumUrl.isNotBlank() && it.albumUrl != BrowserUnit.URL_ABOUT_BLANK) ||
@@ -2157,8 +2196,11 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
             shouldReverse = !config.isToolbarOnTop
             hasCopiedText = getClipboardText().isNotEmpty()
             lifecycleScope.launch {
-                binding.inputUrl.recordList.value =
-                    recordDb.listEntries(config.showBookmarksInInputBar)
+                withContext(Dispatchers.IO) {
+                    searchSuggestionViewModel.initSuggestions()
+                    binding.inputUrl.recordList.value = searchSuggestionViewModel.suggestions.value
+                }
+                //recordDb.listEntries(config.showBookmarksInInputBar)
             }
         }
 
@@ -2280,95 +2322,7 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
 
     private var previousKeyEvent: KeyEvent? = null
     override fun handleKeyEvent(event: KeyEvent): Boolean {
-        if (event.action != ACTION_DOWN) return false
-        if (ebWebView.hitTestResult.type == HitTestResult.EDIT_TEXT_TYPE) return false
-
-        // process dpad navigation
-        if (config.useUpDownPageTurn) {
-            when (event.keyCode) {
-                KeyEvent.KEYCODE_DPAD_DOWN -> {
-                    ebWebView.pageDownWithNoAnimation()
-                    return true
-                }
-
-                KeyEvent.KEYCODE_DPAD_UP -> {
-                    ebWebView.pageUpWithNoAnimation()
-                    return true
-                }
-            }
-        }
-
-        if (!config.enableViBinding) return false
-        // vim bindings
-        if (event.isShiftPressed) {
-            when (event.keyCode) {
-                KeyEvent.KEYCODE_J -> {
-                    val controller = nextAlbumController(true) ?: return true
-                    showAlbum(controller)
-                }
-
-                KeyEvent.KEYCODE_K -> {
-                    val controller = nextAlbumController(false) ?: return true
-                    showAlbum(controller)
-                }
-
-                KeyEvent.KEYCODE_G -> ebWebView.jumpToBottom()
-                else -> return false
-            }
-        } else { // non-capital
-            when (event.keyCode) {
-                KeyEvent.KEYCODE_B -> openBookmarkPage()
-                KeyEvent.KEYCODE_O -> {
-                    if (previousKeyEvent?.keyCode == KeyEvent.KEYCODE_V) {
-                        decreaseFontSize()
-                        previousKeyEvent = null
-                    } else {
-                        focusOnInput()
-                    }
-                }
-
-                KeyEvent.KEYCODE_J -> ebWebView.pageDownWithNoAnimation()
-                KeyEvent.KEYCODE_K -> ebWebView.pageUpWithNoAnimation()
-                KeyEvent.KEYCODE_H -> ebWebView.goBack()
-                KeyEvent.KEYCODE_L -> ebWebView.goForward()
-                KeyEvent.KEYCODE_R -> showTranslation()
-                KeyEvent.KEYCODE_D -> removeAlbum()
-                KeyEvent.KEYCODE_T -> {
-                    addAlbum(getString(R.string.app_name), "")
-                    focusOnInput()
-                }
-
-                KeyEvent.KEYCODE_SLASH -> showSearchPanel()
-                KeyEvent.KEYCODE_G -> {
-                    previousKeyEvent = when {
-                        previousKeyEvent == null -> event
-                        previousKeyEvent?.keyCode == KeyEvent.KEYCODE_G -> {
-                            // gg
-                            jumpToTop()
-                            null
-                        }
-
-                        else -> null
-                    }
-                }
-
-                KeyEvent.KEYCODE_V -> {
-                    previousKeyEvent = if (previousKeyEvent == null) event else null
-                }
-
-                KeyEvent.KEYCODE_I -> {
-                    if (previousKeyEvent?.keyCode == KeyEvent.KEYCODE_V) {
-                        increaseFontSize()
-                        previousKeyEvent = null
-                    }
-                }
-
-                KeyEvent.KEYCODE_F -> toggleFullscreen()
-
-                else -> return false
-            }
-        }
-        return true
+        return keyHandler.handleKeyEvent(event)
     }
 
     override fun loadInSecondPane(url: String): Boolean =
@@ -2415,6 +2369,8 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
 
     private var motionEvent: MotionEvent? = null
     private var longPressPoint: Point = Point(0, 0)
+    private var activeContextMenuDialog: ContextMenuDialogFragment? = null
+    private var isInLongPressMode = false
     override fun onLongPress(message: Message, event: MotionEvent?) {
         if (ebWebView.isSelectingText) return
 
@@ -2426,14 +2382,19 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
             val linkImageUrl = BrowserUnit.getWebViewLinkImageUrl(ebWebView, message)
             BrowserUnit.getWebViewLinkTitle(ebWebView) { linkTitle ->
                 val titleText = linkTitle.ifBlank { url }.toString()
-                ContextMenuDialogFragment(
+                val contextMenuDialog = ContextMenuDialogFragment(
                     url,
                     linkImageUrl.isNotBlank(),
                     config.imageApiKey.isNotBlank(),
                     motionEvent!!.toRawPoint(),
                 ) {
                     this@BrowserActivity.handleContextMenuItem(it, titleText, url, linkImageUrl)
-                }.show(supportFragmentManager, "contextMenu")
+                    activeContextMenuDialog = null
+                    isInLongPressMode = false
+                }
+                activeContextMenuDialog = contextMenuDialog
+                isInLongPressMode = true
+                contextMenuDialog.show(supportFragmentManager, "contextMenu")
             }
         }
     }
@@ -2473,6 +2434,7 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
 
             ContextMenuItemType.TranslateImage -> translateImage(imageUrl)
             ContextMenuItemType.Tts -> addContentToReadList(url)
+            ContextMenuItemType.Summarize -> summarizeLinkContent(url)
             ContextMenuItemType.SaveAs -> {
                 if (url.startsWith("data:image")) {
                     saveFile(url)
@@ -2489,11 +2451,11 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
         }
     }
 
-    private val headlessWebView: EBWebView by lazy {
+    private val toBeReadWebView: EBWebView by lazy {
         EBWebView(this, this).apply {
             setOnPageFinishedAction {
                 lifecycleScope.launch {
-                    val content = headlessWebView.getRawText()
+                    val content = toBeReadWebView.getRawText()
                     if (content.isNotEmpty()) {
                         ttsViewModel.readArticle(content)
                     }
@@ -2503,9 +2465,9 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
                     }
 
                     if (toBeReadProcessUrlList.isNotEmpty()) {
-                        headlessWebView.loadUrl(toBeReadProcessUrlList.removeAt(0))
+                        toBeReadWebView.loadUrl(toBeReadProcessUrlList.removeAt(0))
                     } else {
-                        headlessWebView.loadUrl("about:blank")
+                        toBeReadWebView.loadUrl("about:blank")
                     }
                 }
             }
@@ -2516,7 +2478,7 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
     private fun addContentToReadList(url: String) {
         toBeReadProcessUrlList.add(url)
         if (toBeReadProcessUrlList.size == 1) {
-            headlessWebView.loadUrl(url)
+            toBeReadWebView.loadUrl(url)
         }
         EBToast.show(this, R.string.added_to_read_list)
     }
@@ -2761,6 +2723,13 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
         else -> ebWebView
     }
 
+    private val json = Json {
+        // Configure JSON serializer
+        ignoreUnknownKeys = true
+        encodeDefaults = false // Don't encode default values to reduce size
+        isLenient = true
+    }
+
     // - action mode handling
     override fun onActionModeStarted(mode: ActionMode) {
         val isTextEditMode = ViewUnit.isTextEditMode(this, mode.menu)
@@ -2773,7 +2742,16 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
 
             lifecycleScope.launch {
                 val keyword = getFocusedWebView().getSelectedText()
-                remoteConnViewModel.sendTextSearch(externalSearchViewModel.generateSearchUrl(keyword))
+                val keywordWithContext = getFocusedWebView().getSelectedTextWithContext()
+                val action = config.gptActionList.firstOrNull { it.name == config.remoteQueryActionName }
+                val constructedUrlString =
+                    if (action != null) {
+                        val actionString = json.encodeToString(serializer = ChatGPTActionInfo.serializer(), action)
+                        "action|||$keywordWithContext|||$actionString"
+                    } else {
+                        externalSearchViewModel.generateSearchUrl(keyword)
+                    }
+                remoteConnViewModel.sendTextSearch(constructedUrlString)
             }
             return
         }
@@ -2850,9 +2828,7 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
 
     override fun onActionModeFinished(mode: ActionMode?) {
         super.onActionModeFinished(mode)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            mode?.hide(1000000)
-        }
+        mode?.hide(1000000)
         actionModeMenuViewModel.updateActionMode(null)
     }
 
@@ -2863,3 +2839,4 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
         const val ACTION_READ_ALOUD = "action_read_aloud"
     }
 }
+

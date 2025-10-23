@@ -1,7 +1,7 @@
 package info.plateaukao.einkbro.view.dialog.compose
 
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.border
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
@@ -21,13 +21,14 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.Icon
 import androidx.compose.material.MaterialTheme
 import androidx.compose.material.Text
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Article
+import androidx.compose.material.icons.automirrored.outlined.Chat
 import androidx.compose.material.icons.automirrored.outlined.ChromeReaderMode
 import androidx.compose.material.icons.automirrored.outlined.Feed
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
@@ -41,6 +42,7 @@ import androidx.compose.material.icons.outlined.Apps
 import androidx.compose.material.icons.outlined.Backup
 import androidx.compose.material.icons.outlined.BookmarkAdd
 import androidx.compose.material.icons.outlined.CancelPresentation
+import androidx.compose.material.icons.outlined.CloudUpload
 import androidx.compose.material.icons.outlined.CopyAll
 import androidx.compose.material.icons.outlined.Copyright
 import androidx.compose.material.icons.outlined.Download
@@ -81,7 +83,6 @@ import androidx.compose.ui.unit.sp
 import info.plateaukao.einkbro.R
 import info.plateaukao.einkbro.preference.toggle
 import info.plateaukao.einkbro.view.compose.MyTheme
-import info.plateaukao.einkbro.view.dialog.compose.MenuItemType.AddToPocket
 import info.plateaukao.einkbro.view.dialog.compose.MenuItemType.CloseTab
 import info.plateaukao.einkbro.view.dialog.compose.MenuItemType.CopyLink
 import info.plateaukao.einkbro.view.dialog.compose.MenuItemType.OpenEpub
@@ -134,7 +135,7 @@ enum class MenuItemType {
     ReceiveData, SendLink, ShareLink, OpenWith, CopyLink, Shortcut,
     SetHome, SaveBookmark, OpenEpub, SaveEpub, SavePdf,
     FontSize, WhiteBknd, BoldFont, Search, Download, Settings, BlackFont,
-    SaveArchive, AddToPocket, Highlights, InvertColor
+    SaveArchive, Highlights, InvertColor, ChatWithWeb, Instapaper
 }
 
 @Composable
@@ -222,9 +223,10 @@ private fun MenuItems(
                     onLongClicked = { onLongClicked(MenuItemType.SendLink) },
                 ) { onClicked(MenuItemType.SendLink) }
                 MenuItem(
-                    R.string.menu_add_to_pocket,
-                    R.drawable.ic_pocket
-                ) { onClicked(AddToPocket) }
+                    R.string.menu_instapaper,
+                    Icons.Outlined.CloudUpload,
+                    onLongClicked = { onLongClicked(MenuItemType.Instapaper) },
+                ) { onClicked(MenuItemType.Instapaper) }
                 MenuItem(R.string.menu_save_archive, 0, Icons.Outlined.Save) {
                     onClicked(
                         MenuItemType.SaveArchive
@@ -241,10 +243,6 @@ private fun MenuItems(
                     .horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                MenuItem(
-                    R.string.menu_add_to_pocket,
-                    R.drawable.ic_pocket
-                ) { onClicked(AddToPocket) }
                 MenuItem(R.string.menu_save_epub, Icons.AutoMirrored.Outlined.Feed) { onClicked(SaveEpub) }
                 MenuItem(R.string.copy_link, Icons.Outlined.CopyAll) { onClicked(CopyLink) }
                 MenuItem(
@@ -279,6 +277,11 @@ private fun MenuItems(
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 MenuItem(
+                    R.string.chat_with_web,
+                    Icons.AutoMirrored.Outlined.Chat,
+                    onLongClicked = { onLongClicked(MenuItemType.ChatWithWeb) },
+                ) { onClicked(MenuItemType.ChatWithWeb) }
+                MenuItem(
                     R.string.split_screen,
                     Icons.Outlined.ViewStream,
                 ) { onClicked(MenuItemType.SplitScreen) }
@@ -312,7 +315,8 @@ private fun MenuItems(
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 val ttsRes = if (isSpeaking) Icons.Filled.RecordVoiceOver else Icons.Outlined.RecordVoiceOver
-                MenuItem(R.string.menu_tts, ttsRes,
+                MenuItem(
+                    R.string.menu_tts, ttsRes,
                     onLongClicked = { onLongClicked(MenuItemType.Tts) }) { onClicked(MenuItemType.Tts) }
                 val invertRes =
                     if (hasInvertedColor) Icons.Outlined.InvertColorsOff else Icons.Outlined.InvertColors
@@ -327,7 +331,8 @@ private fun MenuItems(
                 MenuItem(R.string.black_font, blackRes) { onClicked(MenuItemType.BlackFont) }
                 val boldRes =
                     if (boldFont) R.drawable.ic_bold_font_active else R.drawable.ic_bold_font
-                MenuItem(R.string.bold_font, boldRes,
+                MenuItem(
+                    R.string.bold_font, boldRes,
                     onLongClicked = { onLongClicked(MenuItemType.BoldFont) }
                 ) { onClicked(MenuItemType.BoldFont) }
                 MenuItem(
@@ -428,7 +433,6 @@ fun MenuItem(
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val pressed by interactionSource.collectIsPressedAsState()
-    val borderWidth = if (pressed) 0.5.dp else (-1).dp
 
     val configuration = LocalConfiguration.current
     val width = when {
@@ -438,56 +442,66 @@ fun MenuItem(
     }
 
     val fontSize = if (!showIcon) 16.sp else if (configuration.screenWidthDp > 500) 10.sp else 8.sp
-    Column(
-        modifier = Modifier
-            .width(width)
-            .height(if (isLargeType) 80.dp else 70.dp)
-            .border(borderWidth, MaterialTheme.colors.onBackground, RoundedCornerShape(7.dp))
-            .combinedClickable(
-                interactionSource = interactionSource,
-                indication = null,
-                onLongClick = { onLongClicked() },
-                onClick = { onClicked() },
-            ),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = if (!showIcon) Arrangement.Center else Arrangement.Top
-    ) {
-        if (showIcon) {
-            if (imageVector != null) {
-                Icon(
-                    imageVector = imageVector, contentDescription = null,
-                    modifier = Modifier
-                        .size(if (isLargeType) 55.dp else 44.dp)
-                        .padding(horizontal = 6.dp),
-                    tint = MaterialTheme.colors.onBackground
-                )
-            } else {
-                Icon(
-                    imageVector = ImageVector.vectorResource(id = iconResId), contentDescription = null,
-                    modifier = Modifier
-                        .size(if (isLargeType) 55.dp else 44.dp)
-                        .padding(horizontal = 6.dp),
-                    tint = MaterialTheme.colors.onBackground
-                )
-            }
+
+    Box {
+        if (pressed) {
+            Box(
+                modifier = Modifier
+                    .size(6.dp)
+                    .background(MaterialTheme.colors.onBackground, shape = CircleShape)
+                    .align(Alignment.TopCenter)
+            )
         }
-        Box(
+        Column(
             modifier = Modifier
-                .fillMaxWidth()
-                .height(40.dp),
-            contentAlignment = Alignment.Center
+                .width(width)
+                .height(if (!showIcon) 50.dp else if (isLargeType) 80.dp else 70.dp)
+                .combinedClickable(
+                    interactionSource = interactionSource,
+                    indication = null,
+                    onLongClick = { onLongClicked() },
+                    onClick = { onClicked() },
+                ),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = if (!showIcon) Arrangement.Center else Arrangement.Top
         ) {
-            Text(
+            if (showIcon) {
+                if (imageVector != null) {
+                    Icon(
+                        imageVector = imageVector, contentDescription = null,
+                        modifier = Modifier
+                            .size(if (isLargeType) 55.dp else 44.dp)
+                            .padding(horizontal = 6.dp),
+                        tint = MaterialTheme.colors.onBackground
+                    )
+                } else {
+                    Icon(
+                        imageVector = ImageVector.vectorResource(id = iconResId), contentDescription = null,
+                        modifier = Modifier
+                            .size(if (isLargeType) 55.dp else 44.dp)
+                            .padding(horizontal = 6.dp),
+                        tint = MaterialTheme.colors.onBackground
+                    )
+                }
+            }
+            Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .offset(y = if (showIcon) (-5).dp else 10.dp),
-                text = stringResource(id = titleResId),
-                textAlign = TextAlign.Center,
-                maxLines = 2,
-                lineHeight = if (!showIcon) 20.sp else 12.sp,
-                fontSize = fontSize,
-                color = MaterialTheme.colors.onBackground
-            )
+                    .height(40.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .offset(y = if (showIcon) (-5).dp else 0.dp),
+                    text = stringResource(id = titleResId),
+                    textAlign = TextAlign.Center,
+                    maxLines = 2,
+                    lineHeight = if (!showIcon) 20.sp else 12.sp,
+                    fontSize = fontSize,
+                    color = MaterialTheme.colors.onBackground
+                )
+            }
         }
     }
 }

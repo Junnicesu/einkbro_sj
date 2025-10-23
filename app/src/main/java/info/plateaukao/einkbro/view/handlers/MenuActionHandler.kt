@@ -44,6 +44,10 @@ class MenuActionHandler(
             MenuItemType.Tts -> TtsSettingDialogFragment()
                 .show(activity.supportFragmentManager, "TtsSettingDialog")
 
+            MenuItemType.ChatWithWeb -> browserController.chatWithWeb(true)
+
+            MenuItemType.Instapaper -> browserController.configureInstapaper()
+
             else -> Unit
         }
 
@@ -108,7 +112,8 @@ class MenuActionHandler(
             MenuItemType.SaveArchive -> browserController.showWebArchiveFilePicker()
             MenuItemType.Settings -> IntentUnit.gotoSettings(activity)
 
-            MenuItemType.AddToPocket -> ebWebView.url?.let { browserController.addToPocket(it) }
+            MenuItemType.ChatWithWeb -> browserController.chatWithWeb()
+            MenuItemType.Instapaper -> browserController.addToInstapaper()
         }
     }
 

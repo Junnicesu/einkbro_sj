@@ -52,6 +52,7 @@ import info.plateaukao.einkbro.activity.SettingRoute.Toolbar
 import info.plateaukao.einkbro.activity.SettingRoute.Ui
 import info.plateaukao.einkbro.activity.SettingRoute.UserAgent
 import info.plateaukao.einkbro.activity.SettingRoute.valueOf
+import info.plateaukao.einkbro.preference.ChatGPTActionInfo
 import info.plateaukao.einkbro.preference.ConfigManager
 import info.plateaukao.einkbro.preference.HighlightStyle
 import info.plateaukao.einkbro.preference.TranslationTextStyle
@@ -59,9 +60,11 @@ import info.plateaukao.einkbro.setting.ActionSettingItem
 import info.plateaukao.einkbro.setting.BooleanSettingItem
 import info.plateaukao.einkbro.setting.DividerSettingItem
 import info.plateaukao.einkbro.setting.LinkSettingItem
+import info.plateaukao.einkbro.setting.ListSettingWithClassItem
 import info.plateaukao.einkbro.setting.ListSettingWithEnumItem
-import info.plateaukao.einkbro.setting.ListSettingWithStringItem
+import info.plateaukao.einkbro.setting.ListSettingWithStrResIdItem
 import info.plateaukao.einkbro.setting.NavigateSettingItem
+import info.plateaukao.einkbro.setting.ProgressActionSettingItem
 import info.plateaukao.einkbro.setting.SettingItemInterface
 import info.plateaukao.einkbro.setting.SettingScreen
 import info.plateaukao.einkbro.setting.ValueSettingItem
@@ -222,20 +225,24 @@ class SettingActivity : FragmentActivity() {
                                     addAll(LinkSettingItem.entries.toList())
                                     add(DividerSettingItem())
                                     if (BuildConfig.showUpdateButton) {
-                                        add(ActionSettingItem(
+                                        add(ProgressActionSettingItem(
                                             R.string.setting_title_github_update,
                                             0,
-                                        ) {
+                                        ) { progressCallback ->
                                             lifecycleScope.launch(Dispatchers.IO) {
-                                                HelperUnit.upgradeToLatestRelease(this@SettingActivity)
+                                                HelperUnit.upgradeToLatestRelease(this@SettingActivity) { progress, progressText ->
+                                                    progressCallback.updateProgress(progress, progressText)
+                                                }
                                             }
                                         })
-                                        add(ActionSettingItem(
+                                        add(ProgressActionSettingItem(
                                             R.string.setting_title_github_snapshot,
                                             0,
-                                        ) {
+                                        ) { progressCallback ->
                                             lifecycleScope.launch(Dispatchers.IO) {
-                                                HelperUnit.upgradeFromSnapshot(this@SettingActivity)
+                                                HelperUnit.upgradeFromSnapshot(this@SettingActivity) { progress, progressText ->
+                                                    progressCallback.updateProgress(progress, progressText)
+                                                }
                                             }
                                         })
                                     }
@@ -553,6 +560,13 @@ class SettingActivity : FragmentActivity() {
             R.string.setting_summary_enabling_web_cache,
             config::webLoadCacheFirst,
         )
+        // add a boolean setting to enable/disable url drag to action feature
+        ,BooleanSettingItem(
+            R.string.setting_title_enable_url_drag_to_action,
+            0,
+            R.string.setting_summary_enable_url_drag_to_action,
+            config::enableDragUrlToAction,
+        )
     )
 
     private val toolbarSettingItems = listOf(
@@ -681,10 +695,16 @@ class SettingActivity : FragmentActivity() {
             config = config::navGestureRight,
             options = GestureType.entries.map { it.resId },
         ),
+        ListSettingWithEnumItem(
+            R.string.setting_floating_button_long_click,
+            0,
+            config = config::navButtonLongClickGesture,
+            options = GestureType.entries.map { it.resId },
+        ),
     )
 
     private val searchSettingItems = listOf(
-        ListSettingWithStringItem(
+        ListSettingWithStrResIdItem(
             R.string.setting_title_search_engine,
             0,
             config = config::searchEngine,
@@ -707,6 +727,12 @@ class SettingActivity : FragmentActivity() {
             0,
             R.string.setting_summary_search_engine,
             config = config::searchEngineUrl,
+        ),
+        BooleanSettingItem(
+            R.string.setting_title_search_suggestion,
+            0,
+            R.string.setting_summary_search_suggestion,
+            config::enableSearchSuggestion,
         ),
         DividerSettingItem(),
         ValueSettingItem(
@@ -734,6 +760,13 @@ class SettingActivity : FragmentActivity() {
             0,
             R.string.setting_summary_search_in_same_tab,
             config::isExternalSearchInSameTab,
+        ),
+        DividerSettingItem(),
+        ListSettingWithClassItem<ChatGPTActionInfo>(
+            R.string.setting_title_remote_query,
+            0,
+            config = config::remoteQueryActionName,
+            options = listOf("Search") +  config.gptActionList.map { it.name }
         ),
     )
 
@@ -915,6 +948,37 @@ class SettingActivity : FragmentActivity() {
             R.string.setting_summary_chat_stream,
             config::enableOpenAiStream
         ),
+        DividerSettingItem(R.string.web_content_processing),
+        ListSettingWithEnumItem(
+            R.string.summary_gpt_type,
+            0,
+            R.string.setting_summary_summary_gpt_type,
+            config::gptForSummary,
+            listOf(
+                R.string.system_default,
+                R.string.openai,
+                R.string.self_hosted,
+                R.string.google_gemini
+            )
+        ),
+        ValueSettingItem(
+            R.string.setting_title_gpt_prompt_for_web_page,
+            0,
+            R.string.setting_summary_gpt_prompt_for_web_page,
+            config::gptUserPromptForWebPage
+        ),
+        ListSettingWithEnumItem(
+            R.string.web_processing_gpt_type,
+            0,
+            R.string.setting_summary_web_processing_gpt_type,
+            config::gptForChatWeb,
+            listOf(
+                R.string.system_default,
+                R.string.openai,
+                R.string.self_hosted,
+                R.string.google_gemini
+            )
+        ),
         DividerSettingItem(R.string.openai),
         ValueSettingItem(
             R.string.setting_title_edit_gpt_api_key,
@@ -935,10 +999,16 @@ class SettingActivity : FragmentActivity() {
             config::useOpenAiTts
         ),
         ValueSettingItem(
-            R.string.setting_title_gpt_prompt_for_web_page,
+            R.string.setting_title_gpt_audio_model_name,
             0,
-            R.string.setting_summary_gpt_prompt_for_web_page,
-            config::gptUserPromptForWebPage
+            R.string.setting_summary_gpt_audio_model_name,
+            config::gptVoiceModel
+        ),
+        ValueSettingItem(
+            R.string.setting_title_gpt_prompt_for_tts,
+            0,
+            R.string.setting_summary_gpt_prompt_for_tts,
+            config::gptVoicePrompt
         ),
         DividerSettingItem(R.string.openai_compatible_server),
         BooleanSettingItem(

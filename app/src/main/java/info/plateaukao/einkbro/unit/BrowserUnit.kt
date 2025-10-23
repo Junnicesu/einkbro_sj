@@ -32,6 +32,8 @@ import androidx.activity.result.ActivityResult
 import androidx.activity.result.ActivityResultLauncher
 import androidx.annotation.RequiresApi
 import androidx.appcompat.view.ContextThemeWrapper
+import androidx.core.app.ActivityCompat.finishAffinity
+import androidx.fragment.app.FragmentActivity
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.lifecycleScope
 import info.plateaukao.einkbro.R
@@ -45,6 +47,7 @@ import info.plateaukao.einkbro.view.EBToast
 import info.plateaukao.einkbro.view.EBToast.showShort
 import info.plateaukao.einkbro.view.EBWebView
 import info.plateaukao.einkbro.view.dialog.DialogManager
+import info.plateaukao.einkbro.view.dialog.ShortcutEditDialog
 import info.plateaukao.einkbro.view.dialog.TextInputDialog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
@@ -66,6 +69,7 @@ import java.util.Base64
 import java.util.Locale
 import java.util.Objects
 import java.util.regex.Pattern
+import kotlin.system.exitProcess
 
 object BrowserUnit : KoinComponent {
     const val PROGRESS_MAX = 100
@@ -757,6 +761,29 @@ object BrowserUnit : KoinComponent {
     suspend fun getResourceFromUrl(url: String, timeout: Int = 0): ByteArray {
         return getResourceAndMimetypeFromUrl(url, timeout).first
     }
+
+    fun createShortcut(activity: FragmentActivity, ebWebView: EBWebView) {
+        val currentUrl = ebWebView.url ?: return
+        ShortcutEditDialog(
+            activity,
+            HelperUnit.secString(ebWebView.title),
+            currentUrl,
+            ebWebView.favicon,
+            {
+                ViewUnit.hideKeyboard(activity)
+                EBToast.show(activity, R.string.toast_edit_successful)
+            },
+            { ViewUnit.hideKeyboard(activity) }
+        ).show()
+    }
+
+    fun restartApp(activity: Activity) {
+        finishAffinity(activity) // Finishes all activities.
+        activity.startActivity(activity.packageManager.getLaunchIntentForPackage(activity.packageName))    // Start the launch activity
+        activity.overridePendingTransition(0, 0)
+        exitProcess(0)
+    }
+
 
     private fun isRedirect(responseCode: Int): Boolean = responseCode in 301..399
 }

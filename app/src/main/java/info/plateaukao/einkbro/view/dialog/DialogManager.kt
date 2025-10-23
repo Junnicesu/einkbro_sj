@@ -10,21 +10,22 @@ import android.view.LayoutInflater
 import android.view.View
 import android.webkit.URLUtil
 import androidx.appcompat.app.AlertDialog
-import androidx.core.app.ActivityCompat.finishAffinity
 import androidx.core.net.toUri
 import androidx.documentfile.provider.DocumentFile
 import info.plateaukao.einkbro.R
 import info.plateaukao.einkbro.databinding.DialogEditExtensionBinding
+import info.plateaukao.einkbro.databinding.DialogInstapaperCredentialsBinding
 import info.plateaukao.einkbro.databinding.DialogSavedEpubListBinding
 import info.plateaukao.einkbro.databinding.ListItemEpubFileBinding
 import info.plateaukao.einkbro.preference.ConfigManager
+import info.plateaukao.einkbro.unit.BrowserUnit.restartApp
 import info.plateaukao.einkbro.unit.HelperUnit
+import info.plateaukao.einkbro.unit.IntentUnit
 import info.plateaukao.einkbro.unit.ViewUnit
 import info.plateaukao.einkbro.util.Constants
 import info.plateaukao.einkbro.view.EBToast
 import org.koin.core.component.KoinComponent
 import org.koin.core.component.inject
-import kotlin.system.exitProcess
 
 
 class DialogManager(
@@ -217,6 +218,18 @@ class DialogManager(
             defaultValue
         ).show()
 
+    suspend fun getSelectedOptionWithString(
+        titleId: Int,
+        listSettings: List<String>,
+        defaultValue: Int,
+    ): Int? =
+        ListSettingWithNameDialog(
+            activity,
+            titleId,
+            listSettings,
+            defaultValue
+        ).show()
+
     fun showBookmarkFilePicker() {
         val intent = Intent(Intent.ACTION_CREATE_DOCUMENT)
         intent.addCategory(Intent.CATEGORY_OPENABLE)
@@ -259,8 +272,40 @@ class DialogManager(
     fun showRestartConfirmDialog() {
         showOkCancelDialog(
             messageResId = R.string.toast_restart,
-            okAction = { restartApp() }
+            okAction = { restartApp(activity) }
         )
+    }
+
+    fun showInstapaperCredentialsDialog(
+        confirmAction: (username: String, password: String) -> Unit,
+    ) {
+        val binding = DialogInstapaperCredentialsBinding.inflate(inflater)
+
+        val dialog = showOkCancelDialog(
+            title = activity.getString(R.string.menu_instapaper),
+            view = binding.root,
+            okAction = {
+                val username = binding.dialogInstapaperUsername.text.toString().trim()
+                val password = binding.dialogInstapaperPassword.text.toString().trim()
+
+                if (username.isEmpty() || password.isEmpty()) {
+                    EBToast.show(activity, activity.getString(R.string.toast_input_empty))
+                } else {
+                    config.instapaperUsername = username
+                    config.instapaperPassword = password
+                    confirmAction(username, password)
+                }
+            },
+            cancelAction = { ViewUnit.hideKeyboard(activity) }
+        )
+
+        binding.dialogInstapaperUsername.setText(config.instapaperUsername)
+        binding.dialogInstapaperPassword.setText(config.instapaperPassword)
+        binding.dialogInstapaperCreateAccount.setOnClickListener {
+            IntentUnit.launchUrl(activity, "https://www.instapaper.com/user/register")
+            dialog.dismiss()
+        }
+
     }
 
     fun showCreateOrOpenBookmarkFileDialog(
@@ -275,13 +320,6 @@ class DialogManager(
                 setNegativeButton(R.string.bookmark_open_file) { _, _ -> openFileAction() }
             }
         dialog.show()
-    }
-
-    private fun restartApp() {
-        finishAffinity(activity) // Finishes all activities.
-        activity.startActivity(activity.packageManager.getLaunchIntentForPackage(activity.packageName))    // Start the launch activity
-        activity.overridePendingTransition(0, 0)
-        exitProcess(0)
     }
 
     companion object {

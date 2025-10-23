@@ -81,7 +81,7 @@
     <string name="setting_title_images">Images</string>
     <string name="setting_summary_images">Enable network images. Disabling could be useful for saving mobile data and loading
         websites faster</string>
-    
+
     <string name="setting_title_cookie">Cookies</string>
     <string name="setting_summary_cookie">Enable Cookies. Cookies are small text files, which are stored on your device. Websites
         use them, for instance, to store user settings (e.g. search settings) but they could also be used to collect personal
@@ -171,10 +171,10 @@
 
     <!-- Gestures -->
     <string name="setting_gestures">Gestures</string>
-    
+
     <string name="setting_gestures_use_title">Use gestures on floating button</string>
     <string name="setting_gestures_use_summary">Swipe on \"floating button\" to execute actions</string>
-    
+
     <string name="setting_multitouch_use_title">Two finger swipe gestures</string>
     <string name="setting_multitouch_use_summary">Use two finger swipe on web content to trigger actions</string>
     <string name="setting_title_two_finger_swipe">Two finger swipe</string>
@@ -429,7 +429,6 @@
     <string name="setting_title_userAgent_toggle">Enable Custom User Agent</string>
     <string name="setting_summary_userAgent">Input custom User Agent strings here</string>
     <string name="setting_summary_userAgent_toggle">Enable custom useragent</string>
-    <string name="menu_add_to_pocket">Add to Pocket</string>
     <string name="content_adjustment">Content Adjustment</string>
     <string name="share_save"><![CDATA[Share & Save]]></string>
     <string name="menu_gpt">ChatGPT</string>
@@ -473,7 +472,7 @@
     <string name="setting_summary_dual_caption">Select language for second caption</string>
     <string name="naver_translate">Naver Translate</string>
     <string name="setting_title_gpt_model_name">OpenAI model name</string>
-    <string name="setting_summary_gpt_model_name">Default is gpt-3.5-turbo. Insert other model name if necessary</string>
+    <string name="setting_summary_gpt_model_name">Default is gpt-4.1. Insert other model name if necessary</string>
     <string name="split_search">Split Search</string>
     <string name="papago_translate_by_screen">Papago by Screen</string>
     <string name="split_search_settings">Split Search settings</string>
@@ -571,6 +570,7 @@
     <string name="setting_touch_up_long_click">Up long click action</string>
     <string name="setting_touch_down_click">Down click action</string>
     <string name="setting_touch_down_long_click">Down long click action</string>
+    <string name="setting_floating_button_long_click">Long click</string>
     <string name="setting_tts_type">Text-to-Speech Engine</string>
     <string name="setting_tts_voice">Voice</string>
     <string name="system_settings">System Settings</string>
@@ -599,4 +599,35 @@
     <string name="setting_title_reader_mode_padding">Padding for reader mode</string>
     <string name="setting_summary_reader_mode_padding">Padding value (in px) for reader mode, default value is 10</string>
     <string name="iansui_tc">iansui(TC)</string>
+    <string name="openai_translate_by_paragraph">OpenAi by Paragraph</string>
+    <string name="gemini_translate_by_paragraph">Gemini by Paragraph</string>
+    <string name="setting_title_gpt_prompt_for_tts">audio output instructions</string>
+    <string name="setting_summary_gpt_prompt_for_tts">instructions when gpt-4o-mini-tts model is used.</string>
+    <string name="setting_title_gpt_audio_model_name">OpenAI TTS model name</string>
+    <string name="setting_summary_gpt_audio_model_name">Available options: tts-1 (default), tts-1-hd, gpt-4o-mini-tts</string>
+    <string name="chat_with_web">Chat With Web</string>
+    <string name="web_content_processing">Web Content Processing</string>
+    <string name="web_processing_gpt_type">Gpt Engine</string>
+    <string name="setting_summary_web_processing_gpt_type">Choose the engine to process web content</string>
+    <string name="self_hosted">Self Hosted</string>
+    <string name="summary_gpt_type">Gpt type for summary web content</string>
+    <string name="setting_summary_summary_gpt_type">Choose gpt engine for content summarization</string>
+    <string name="menu_summarize">Summarize</string>
+    <string name="setting_title_remote_query">Remote Query Action</string>
+    <string name="sc_disable_adblock_short">No AdBlock</string>
+    <string name="sc_disable_adblock_long">No AdBlock</string>
+    <string name="sc_disable_adblock_disabled">No AdBlock</string>
+    <string name="menu_instapaper">Instapaper</string>
+    <string name="added_to_instapaper">Added to Instapaper</string>
+    <string name="failed_to_add_to_instapaper">failed</string>
+    <string name="instapaper_username_hint">Username or Email</string>
+    <string name="instapaper_password_hint">Password</string>
+    <string name="instapaper_create_account">Create account</string>
+    <string name="url_empty">url is empty</string>
+    <string name="setting_summary_nav_pos_reset_custom">Reset custom position</string>
+    <string name="setting_title_enable_url_drag_to_action">1 touch to url action</string>
+    <string name="setting_summary_enable_url_drag_to_action">Long click on url and move to item to trigger it</string>
+    <string name="suggestion">"Search: "</string>
+    <string name="setting_title_search_suggestion">Search suggestions</string>
+    <string name="setting_summary_search_suggestion">"while inputting content, show search suggestions "</string>
 </resources>

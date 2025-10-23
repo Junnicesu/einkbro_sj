@@ -161,6 +161,8 @@ class ConfigManager(
 
     var webLoadCacheFirst by BooleanPreference(sp, "sp_web_load_cache_first", false)
 
+    var enableSearchSuggestion by BooleanPreference(sp, "sp_enable_search_suggestion", true)
+
     var pageReservedOffset: Int by IntPreference(sp, K_PRESERVE_HEIGHT, 80)
 
     var pageReservedOffsetInString: String by StringPreference(
@@ -222,7 +224,6 @@ class ConfigManager(
         ADBLOCK_URL_DEFAULT
     )
     var bookmarkSyncUrl by StringPreference(sp, K_BOOKMARK_SYNC_URL, "")
-    var pocketAccessToken by StringPreference(sp, K_POCKET_ACCESS_TOKEN, "")
 
     var gptApiKey by StringPreference(sp, K_GPT_API_KEY, "")
 
@@ -244,12 +245,14 @@ class ConfigManager(
         "Summarize in 50 words:"
     )
     var imageApiKey by StringPreference(sp, K_IMAGE_API_KEY, "")
-    var gptModel by StringPreference(sp, K_GPT_MODEL, "gpt-3.5-turbo")
+    var gptModel by StringPreference(sp, K_GPT_MODEL, "gpt-4.1")
     var alternativeModel by StringPreference(sp, K_ALTERNATIVE_MODEL, gptModel)
     var geminiModel by StringPreference(sp, K_GEMINI_MODEL, "gemini-1.5-flash")
     var gptVoiceOption: GptVoiceOption
         get() = GptVoiceOption.entries[sp.getInt("K_GPT_VOICE_OPTION", 0)]
         set(value) = sp.edit { putInt("K_GPT_VOICE_OPTION", value.ordinal) }
+    var gptVoiceModel by StringPreference(sp, K_GPT_VOICE_MODEL, "tts-1")
+    var gptVoicePrompt by StringPreference(sp, K_GPT_VOICE_PROMPT, "")
 
     var gptUrl by StringPreference(sp, K_GPT_SERVER_URL, "https://api.openai.com")
     var useCustomGptUrl by BooleanPreference(sp, K_USE_CUSTOM_GPT_URL, false)
@@ -265,6 +268,11 @@ class ConfigManager(
     var navGestureDown by GestureTypePreference(sp, K_GESTURE_NAV_DOWN)
     var navGestureLeft by GestureTypePreference(sp, K_GESTURE_NAV_LEFT)
     var navGestureRight by GestureTypePreference(sp, K_GESTURE_NAV_RIGHT)
+    var navButtonLongClickGesture by GestureTypePreference(
+        sp,
+        K_GESTURE_NAV_LONG_CLICK,
+        defaultValue = GestureType.Overview
+    )
 
     var upClickGesture by GestureTypePreference(
         sp, "K_UP_CLICK_GESTURE", GestureType.PageUp
@@ -314,6 +322,9 @@ class ConfigManager(
     var ttsShowCurrentText by BooleanPreference(sp, "K_TTS_SHOW_CURRENT_TEXT", false)
 
     var ttsShowTextTranslation by BooleanPreference(sp, "K_TTS_SHOW_TEXT_TRANSLATION", false)
+
+    // add a boolean preference for toggling url dragging
+    var enableDragUrlToAction by BooleanPreference(sp, "K_ENABLE_DRAG_URL_TO_ACTION", true)
 
     private val K_RECENT_USED_TTS_VOICES = "sp_recent_used_tts_voices"
     var recentUsedTtsVoices: MutableList<VoiceItem>
@@ -672,7 +683,8 @@ class ConfigManager(
         }
         private set(value) {
             sp.edit {
-                putString(K_SPLIT_SEARCH_ITEMS,
+                putString(
+                    K_SPLIT_SEARCH_ITEMS,
                     value.joinToString("###") {
                         Json.encodeToString(SplitSearchItemInfo.serializer(), it)
                     }
@@ -749,6 +761,17 @@ class ConfigManager(
             }
         }
 
+    var gptForChatWeb: GptActionType
+        get() = GptActionType.entries[sp.getInt(K_GPT_FOR_CHAT_WEB, 0)]
+        set(value) {
+            sp.edit { putInt(K_GPT_FOR_CHAT_WEB, value.ordinal) }
+        }
+    var gptForSummary: GptActionType
+        get() = GptActionType.entries[sp.getInt(K_GPT_FOR_SUMMARY, 0)]
+        set(value) {
+            sp.edit { putInt(K_GPT_FOR_SUMMARY, value.ordinal) }
+        }
+
     fun getDefaultActionModel(): String = if (useGeminiApi) {
         geminiModel
     } else if (useCustomGptUrl) {
@@ -787,6 +810,11 @@ class ConfigManager(
                 )
             }
         }
+
+    var remoteQueryActionName by StringPreference(sp, K_REMOTE_QUERY_ACTION_NAME, "Search")
+    
+    var instapaperUsername by StringPreference(sp, K_INSTAPAPER_USERNAME, "")
+    var instapaperPassword by StringPreference(sp, K_INSTAPAPER_PASSWORD, "")
 
     fun addGptAction(action: ChatGPTActionInfo) {
         gptActionList = gptActionList.toMutableList().apply { add(action) }
@@ -942,8 +970,8 @@ class ConfigManager(
         const val K_GESTURE_NAV_DOWN = "setting_gesture_nav_down"
         const val K_GESTURE_NAV_LEFT = "setting_gesture_nav_left"
         const val K_GESTURE_NAV_RIGHT = "setting_gesture_nav_right"
+        const val K_GESTURE_NAV_LONG_CLICK = "setting_gesture_nav_long_click"
 
-        const val K_POCKET_ACCESS_TOKEN = "sp_pocket_access_token"
         const val K_GPT_API_KEY = "sp_gpt_api_key"
         const val K_GEMINI_API_KEY = "sp_gemini_api_key"
         const val K_GPT_SYSTEM_PROMPT = "sp_gpt_system_prompt"
@@ -953,6 +981,8 @@ class ConfigManager(
         const val K_IMAGE_API_KEY = "sp_image_api_key"
         const val K_DUAL_CAPTION_LOCALE = "sp_dual_caption_locale"
         const val K_GPT_MODEL = "sp_gp_model"
+        const val K_GPT_VOICE_MODEL = "sp_gpt_voice_model"
+        const val K_GPT_VOICE_PROMPT = "sp_gpt_voice_prompt"
         const val K_ALTERNATIVE_MODEL = "sp_alternative_model"
         const val K_GEMINI_MODEL = "sp_gemini_model"
         const val K_SPLIT_SEARCH_STRING = "sp_split_search_prefix"
@@ -994,10 +1024,17 @@ class ConfigManager(
         private const val K_SPLIT_SEARCH_ITEMS = "sp_split_search_items"
         const val K_GPT_ACTION_ITEMS = "sp_gpt_action_items"
         private const val K_GPT_ACTION_EXTERNAL = "sp_gpt_action_external"
+        private const val K_GPT_FOR_CHAT_WEB = "sp_gpt_for_chat_web"
+        private const val K_GPT_FOR_SUMMARY = "sp_gpt_for_summary"
 
         private const val K_GPT_SERVER_URL = "sp_gpt_server_url"
         private const val K_USE_CUSTOM_GPT_URL = "sp_use_custom_gpt_url"
         private const val K_USE_GEMINI_API = "sp_use_gemini_api"
+
+        private const val K_REMOTE_QUERY_ACTION_NAME = "sp_remote_query_action_name"
+
+        const val K_INSTAPAPER_USERNAME = "sp_instapaper_username"
+        const val K_INSTAPAPER_PASSWORD = "sp_instapaper_password"
     }
 
     private fun String.toEpubFileInfoList(): MutableList<EpubFileInfo> =
@@ -1096,6 +1133,8 @@ enum class TranslationMode(val labelResId: Int) {
     PAPAGO_TRANSLATE_BY_PARAGRAPH(R.string.papago_translate_by_paragraph),
     PAPAGO_TRANSLATE_BY_SCREEN(R.string.papago_translate_by_screen),
     DEEPL_BY_PARAGRAPH(R.string.deepl_translate_by_paragraph),
+    OPENAI_BY_PARAGRAPH(R.string.openai_translate_by_paragraph),
+    GEMINI_BY_PARAGRAPH(R.string.gemini_translate_by_paragraph),
 }
 
 enum class FontType(val resId: Int) {

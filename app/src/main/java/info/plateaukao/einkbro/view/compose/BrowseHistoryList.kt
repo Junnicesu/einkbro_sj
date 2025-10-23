@@ -15,12 +15,17 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.wrapContentHeight
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.material.Icon
+import androidx.compose.material.IconButton
 import androidx.compose.material.MaterialTheme
 import androidx.compose.material.Text
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.ArrowDownward
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -56,6 +61,7 @@ fun BrowseHistoryList(
     bookmarkManager: BookmarkManager? = null,
     onClick: (Record) -> Unit,
     onLongClick: (Record, Point) -> Unit,
+    onAppendClick: (String) -> Unit = {},
 ) {
     LazyVerticalGrid(
         modifier = modifier,
@@ -70,7 +76,7 @@ fun BrowseHistoryList(
                 record = record,
                 bitmap = bookmarkManager?.findFaviconBy(record.url)?.getBitmap(),
                 modifier = Modifier
-                    .pointerInput(Unit) {
+                    .pointerInput(record) {
                         detectTapGestures(
                             onTap = { _ -> onClick(record) },
                             onLongPress = { it ->
@@ -78,7 +84,9 @@ fun BrowseHistoryList(
                             }
                         )
                     }
-                    .onGloballyPositioned { boxPosition.value = it.positionOnScreen() }
+                    .onGloballyPositioned { boxPosition.value = it.positionOnScreen() },
+                onAppendClick = onAppendClick,
+
             )
         }
     }
@@ -89,6 +97,7 @@ private fun RecordItem(
     modifier: Modifier,
     bitmap: Bitmap? = null,
     record: Record,
+    onAppendClick: (String) -> Unit = {}
 ) {
     val timeString =
         if (record.type == RecordType.History) SimpleDateFormat(
@@ -97,40 +106,64 @@ private fun RecordItem(
         ).format(record.time)
         else ""
 
+    val isTypeSuggestion = record.type == RecordType.Suggestion
+
     Row(
         modifier = modifier
             .padding(2.dp),
         horizontalArrangement = Arrangement.Center
     ) {
-        if (record.type == RecordType.Bookmark) {
-            Icon(
-                modifier = Modifier
-                    .align(Alignment.CenterVertically)
-                    .size(30.dp)
-                    .padding(end = 5.dp),
-                imageVector = ImageVector.vectorResource(id = R.drawable.icon_bookmark),
-                contentDescription = null,
-                tint = MaterialTheme.colors.onBackground
-            )
-        } else if (bitmap != null) {
-            Image(
-                modifier = Modifier
-                    .align(Alignment.CenterVertically)
-                    .size(30.dp)
-                    .padding(end = 5.dp),
-                bitmap = bitmap.asImageBitmap(),
-                contentDescription = null,
-            )
-        } else {
-            Icon(
-                modifier = Modifier
-                    .align(Alignment.CenterVertically)
-                    .size(30.dp)
-                    .padding(end = 5.dp),
-                imageVector = ImageVector.vectorResource(id = R.drawable.ic_history),
-                contentDescription = null,
-                tint = MaterialTheme.colors.onBackground
-            )
+        when {
+            record.type == RecordType.Bookmark -> {
+                Icon(
+                    modifier = Modifier
+                        .align(Alignment.CenterVertically)
+                        .size(30.dp)
+                        .padding(end = 5.dp),
+                    imageVector = ImageVector.vectorResource(id = R.drawable.icon_bookmark),
+                    contentDescription = null,
+                    tint = MaterialTheme.colors.onBackground
+                )
+            }
+            isTypeSuggestion -> {
+                IconButton(
+                    modifier = Modifier
+                        .wrapContentWidth()
+                        .wrapContentHeight()
+                        .padding(0.dp),
+                    onClick = { onAppendClick (record.title.orEmpty()) }
+                ) {
+                    Icon(
+                        modifier = Modifier
+                            .align(Alignment.CenterVertically)
+                            .size(20.dp),
+                        imageVector = Icons.Outlined.ArrowDownward,
+                        contentDescription = null,
+                        tint = MaterialTheme.colors.onBackground
+                    )
+                }
+            }
+            bitmap != null -> {
+                Image(
+                    modifier = Modifier
+                        .align(Alignment.CenterVertically)
+                        .size(30.dp)
+                        .padding(end = 5.dp),
+                    bitmap = bitmap.asImageBitmap(),
+                    contentDescription = null,
+                )
+            }
+            else -> {
+                Icon(
+                    modifier = Modifier
+                        .align(Alignment.CenterVertically)
+                        .size(30.dp)
+                        .padding(end = 5.dp),
+                    imageVector = ImageVector.vectorResource(id = R.drawable.ic_history),
+                    contentDescription = null,
+                    tint = MaterialTheme.colors.onBackground
+                )
+            }
         }
         Column(
             Modifier
@@ -138,43 +171,50 @@ private fun RecordItem(
                 .align(Alignment.CenterVertically)
         ) {
             AndroidView(
+                modifier = Modifier
+                    .conditional(isTypeSuggestion) {
+                        height(35.dp)
+                        padding(end = 5.dp)
+                    },
                 factory = { context ->
                     TextView(context).apply {
-                        textSize = 16.sp.value.toFloat()
+                        textSize = if (isTypeSuggestion) 18.sp.value else 16.sp.value
                         maxLines = 1
                         ellipsize = TextUtils.TruncateAt.MIDDLE
                     }
                 },
                 update = { it.text = record.title ?: "Unknown" }
             )
-            Spacer(modifier = Modifier.height(1.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                AndroidView(
-                    modifier = Modifier
-                        .weight(1F)
-                        .align(Alignment.Top),
-                    factory = { context ->
-                        TextView(context).apply {
-                            textSize = 12.sp.value.toFloat()
-                            textAlignment = TextView.TEXT_ALIGNMENT_CENTER
-                            maxLines = 1
-                            ellipsize = TextUtils.TruncateAt.MIDDLE
-                        }
-                    },
-                    update = { it.text = record.url }
-                )
-                // alight to end of row
-                Text(
-                    modifier = Modifier
-                        .padding(horizontal = 3.dp)
-                        .align(Alignment.Top),
-                    text = timeString,
-                    textAlign = TextAlign.End,
-                    fontSize = 10.sp,
-                    color = MaterialTheme.colors.onBackground,
-                )
+            if (!isTypeSuggestion) {
+                Spacer(modifier = Modifier.height(1.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    AndroidView(
+                        modifier = Modifier
+                            .weight(1F)
+                            .align(Alignment.Top),
+                        factory = { context ->
+                            TextView(context).apply {
+                                textSize = 12.sp.value.toFloat()
+                                textAlignment = TextView.TEXT_ALIGNMENT_CENTER
+                                maxLines = 1
+                                ellipsize = TextUtils.TruncateAt.MIDDLE
+                            }
+                        },
+                        update = { it.text = record.url }
+                    )
+                    // alight to end of row
+                    Text(
+                        modifier = Modifier
+                            .padding(horizontal = 3.dp)
+                            .align(Alignment.Top),
+                        text = timeString,
+                        textAlign = TextAlign.End,
+                        fontSize = 10.sp,
+                        color = MaterialTheme.colors.onBackground,
+                    )
+                }
             }
         }
     }

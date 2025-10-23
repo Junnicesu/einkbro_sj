@@ -5,6 +5,7 @@ import android.app.Activity
 import android.content.Context
 import android.util.AttributeSet
 import android.view.KeyEvent.KEYCODE_ENTER
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -35,13 +36,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.platform.AbstractComposeView
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.res.vectorResource
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.ImeAction
@@ -70,6 +74,7 @@ class AutoCompleteTextComposeView @JvmOverloads constructor(
 
     var closeAction: () -> Unit = {}
     var onTextSubmit: (String) -> Unit = {}
+    var onTextChange: (String) -> Unit = {}
     var onPasteClick: () -> Unit = {}
     var onRecordClick: (Record) -> Unit = {}
 
@@ -85,6 +90,7 @@ class AutoCompleteTextComposeView @JvmOverloads constructor(
                 shouldReverse = shouldReverse,
                 hasCopiedText = hasCopiedText,
                 onTextSubmit = onTextSubmit,
+                onTextChange = onTextChange,
                 onPasteClick = onPasteClick,
                 closeAction = closeAction,
                 onRecordClick = onRecordClick,
@@ -118,20 +124,12 @@ fun AutoCompleteTextField(
     recordList: MutableState<List<Record>>,
     hasCopiedText: Boolean = false,
     onTextSubmit: (String) -> Unit,
+    onTextChange: (String) -> Unit,
     onPasteClick: () -> Unit,
     closeAction: () -> Unit,
     onRecordClick: (Record) -> Unit,
 ) {
     val requester = remember { focusRequester }
-    val filteredRecordList = if (text.value.text.isEmpty()) {
-        recordList.value
-    } else {
-        val list = recordList.value.filter {
-            it.title?.contains(text.value.text, ignoreCase = true) == true
-                    || it.url.contains(text.value.text, ignoreCase = true)
-        }
-        list.ifEmpty { recordList.value }
-    }
 
     Column(
         Modifier
@@ -140,7 +138,7 @@ fun AutoCompleteTextField(
         verticalArrangement = if (shouldReverse) Arrangement.Bottom else Arrangement.Top
     ) {
         if (!shouldReverse) {
-            TextInputBar(requester, text, onTextSubmit, hasCopiedText, onPasteClick, closeAction)
+            TextInputBar(requester, text, onTextSubmit, onTextChange, hasCopiedText, onPasteClick, closeAction)
         }
 
         HorizontalSeparator()
@@ -148,17 +146,21 @@ fun AutoCompleteTextField(
             modifier = Modifier
                 .weight(1F, fill = false)
                 .background(MaterialTheme.colors.background),
-            records = filteredRecordList,
+            records = recordList.value,
             bookmarkManager = bookmarkManager,
             shouldReverse = shouldReverse,
             shouldShowTwoColumns = isWideLayout,
             onClick = onRecordClick,
-            onLongClick = { _, _ -> }
+            onLongClick = { _, _ -> },
+            onAppendClick = { suggestion ->
+                val resultString = "$suggestion "
+                text.value = TextFieldValue(resultString, selection = TextRange(resultString.length))
+            },
         )
         HorizontalSeparator()
 
         if (shouldReverse) {
-            TextInputBar(requester, text, onTextSubmit, hasCopiedText, onPasteClick, closeAction)
+            TextInputBar(requester, text, onTextSubmit, onTextChange, hasCopiedText, onPasteClick, closeAction)
         }
     }
 }
@@ -168,6 +170,7 @@ private fun TextInputBar(
     focusRequester: FocusRequester,
     text: MutableState<TextFieldValue>,
     onTextSubmit: (String) -> Unit,
+    onTextChange: (String) -> Unit,
     hasCopiedText: Boolean,
     onPasteClick: () -> Unit,
     onDownClick: () -> Unit,
@@ -185,6 +188,7 @@ private fun TextInputBar(
             focusRequester,
             state = text,
             onValueSubmit = onTextSubmit,
+            onValueChange = onTextChange,
         )
 
         TextBarIcon(
@@ -203,9 +207,14 @@ fun TextInput(
     focusRequester: FocusRequester,
     state: MutableState<TextFieldValue>,
     onValueSubmit: (String) -> Unit,
+    onValueChange: (String) -> Unit,
 ) {
     val scrollState = remember { androidx.compose.foundation.ScrollState(0) }
     val coroutineScope = rememberCoroutineScope()
+    val density = LocalDensity.current
+    var textLayoutResult by remember { mutableStateOf<TextLayoutResult?>(null) }
+    var isFocused by remember { mutableStateOf(false) }
+    val cursorColor = MaterialTheme.colors.onBackground // Cache the color outside Canvas
 
     Box(modifier = modifier.padding(start = 5.dp)) {
         BasicTextField(
@@ -223,6 +232,7 @@ fun TextInput(
                     false
                 }
                 .onFocusChanged { focusState ->
+                    isFocused = focusState.isFocused
                     if (focusState.isFocused) {
                         val text = state.value.text
                         state.value = state.value.copy(
@@ -234,14 +244,54 @@ fun TextInput(
                     }
                 },
             textStyle = TextStyle.Default.copy(color = MaterialTheme.colors.onBackground),
-            cursorBrush = SolidColor(MaterialTheme.colors.onBackground),
-            onValueChange = { state.value = it },
+            cursorBrush = SolidColor(Color.Transparent), // Hide default cursor
+            onValueChange = { state.value = it; onValueChange(it.text) },
             keyboardOptions = KeyboardOptions(
                 imeAction = ImeAction.Search,
-                autoCorrect = false,
+                autoCorrectEnabled = false,
             ),
             keyboardActions = KeyboardActions(onSearch = { onValueSubmit(state.value.text) }),
-        )
+            onTextLayout = { textLayoutResult = it },
+
+            )
+
+        // Custom static cursor - draws a non-blinking cursor line
+        if (isFocused && textLayoutResult != null) {
+            val cursorPosition = state.value.selection.start
+            val textLength = textLayoutResult!!.layoutInput.text.length
+            // Ensure cursor position is within valid bounds for the current text layout
+            // Use coerceIn to ensure the cursor position is always within valid range
+            val safeCursorPosition = cursorPosition.coerceIn(0, textLength)
+
+            // draw cursor when position is 0 and text is empty too
+            if (safeCursorPosition == 0 && textLength == 0) {
+                Canvas(modifier = Modifier.matchParentSize()) {
+                    drawLine(
+                        color = cursorColor,
+                        start = Offset(x = 0f, y = 0f),
+                        end = Offset(x = 0f, y = size.height),
+                        strokeWidth = with(density) { 2.dp.toPx() }
+                    )
+                }
+            } else if (safeCursorPosition <= textLength) {
+                val cursorOffset = textLayoutResult!!.getCursorRect(safeCursorPosition)
+                Canvas(modifier = Modifier.matchParentSize()) {
+                    drawLine(
+                        color = cursorColor,
+                        start = Offset(
+                            x = cursorOffset.left - scrollState.value.toFloat() + 2F,
+                            y = cursorOffset.top
+                        ),
+                        end = Offset(
+                            x = cursorOffset.left - scrollState.value.toFloat() + 2F,
+                            y = cursorOffset.bottom
+                        ),
+                        strokeWidth = with(density) { 2.dp.toPx() }
+                    )
+                }
+            }
+        }
+
         if (state.value.text.isEmpty()) {
             Text(
                 stringResource(R.string.main_omnibox_input_hint),
@@ -281,6 +331,7 @@ fun PreviewTextBar() {
             focusRequester = FocusRequester(),
             recordList = mutableStateOf(listOf()),
             onRecordClick = {},
+            onTextChange = {},
         )
     }
 }

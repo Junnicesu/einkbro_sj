@@ -261,7 +261,7 @@ fun <T : Enum<T>> ListSettingItemUi(
 
 @Composable
 fun ListSettingWithStringItemUi(
-    setting: ListSettingWithStringItem,
+    setting: ListSettingWithStrResIdItem,
     dialogManager: DialogManager,
     showBorder: Boolean = false,
 ) {
@@ -283,6 +283,157 @@ fun ListSettingWithStringItemUi(
             ) ?: return@launch
             setting.config.set(selectedIndex.toString())
             currentValueString.value = context.getString(setting.options[selectedIndex])
+        }
+    }
+}
+
+@Composable
+fun <T> ListSettingWithClassItemUi(
+    setting: ListSettingWithClassItem<T>,
+    dialogManager: DialogManager,
+    showBorder: Boolean = false,
+) {
+    val configString = setting.config.get()
+    var currentValueString = remember { mutableStateOf(configString) }
+    val coroutineScope = rememberCoroutineScope()
+    SettingItemUi(
+        setting = setting,
+        extraTitlePostfix = ": ${currentValueString.value}",
+        showBorder = showBorder,
+    ) {
+        coroutineScope.launch {
+            val selectedIndex = dialogManager.getSelectedOptionWithString(
+                setting.titleResId,
+                setting.options,
+                setting.options.indexOf(configString)
+            ) ?: return@launch
+            val selectedValue = setting.options[selectedIndex]
+            setting.config.set(selectedValue)
+            currentValueString.value = selectedValue
+        }
+    }
+}
+
+@Composable
+fun ProgressActionSettingItemUi(
+    setting: ProgressActionSettingItem,
+    showBorder: Boolean = false,
+) {
+    val progressState = remember { mutableStateOf(ProgressState()) }
+    val coroutineScope = rememberCoroutineScope()
+    
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    val borderWidth = if (pressed) 3.dp else 1.dp
+
+    var modifier = Modifier
+        .fillMaxWidth()
+        .testTag(stringResource(setting.titleResId))
+        .height(80.dp)
+        .clickable(
+            indication = null,
+            interactionSource = interactionSource,
+            enabled = !progressState.value.isRunning
+        ) {
+            if (!progressState.value.isRunning) {
+                coroutineScope.launch {
+                    progressState.value = ProgressState(isRunning = true)
+                    
+                    val progressCallback = object : ProgressCallback {
+                        override suspend fun updateProgress(progress: Float, progressText: String) {
+                            progressState.value = ProgressState(
+                                isRunning = true,
+                                progress = progress,
+                                progressText = progressText
+                            )
+                        }
+                    }
+                    
+                    try {
+                        setting.action(progressCallback)
+                    } finally {
+                        progressState.value = ProgressState()
+                    }
+                }
+            }
+        }
+    
+    if (showBorder) modifier = modifier.border(borderWidth, MaterialTheme.colors.onBackground, RoundedCornerShape(7.dp))
+
+    Column(modifier = modifier) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                .padding(if (progressState.value.isRunning) 8.dp else 0.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            if (setting.iconId != 0) {
+                Icon(
+                    imageVector = ImageVector.vectorResource(id = setting.iconId),
+                    contentDescription = null,
+                    modifier = Modifier
+                        .padding(horizontal = 6.dp)
+                        .fillMaxHeight(),
+                    tint = MaterialTheme.colors.onBackground
+                )
+            }
+            Spacer(
+                modifier = Modifier
+                    .width(6.dp)
+                    .fillMaxHeight()
+            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    modifier = Modifier.wrapContentWidth(),
+                    text = stringResource(id = setting.titleResId),
+                    fontSize = 16.sp,
+                    color = MaterialTheme.colors.onBackground
+                )
+                if (setting.summaryResId != 0) {
+                    Spacer(modifier = Modifier.height(5.dp))
+                    Text(
+                        modifier = Modifier.wrapContentWidth(),
+                        text = stringResource(id = setting.summaryResId),
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colors.onBackground
+                    )
+                }
+            }
+        }
+        
+        if (progressState.value.isRunning) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+            ) {
+                if (progressState.value.progress > 0f) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (progressState.value.progressText.isNotEmpty()) {
+                            Text(
+                                text = progressState.value.progressText,
+                                fontSize = 10.sp,
+                                color = MaterialTheme.colors.onBackground,
+                                modifier = Modifier.weight(1f)
+                            )
+                        } else {
+                            Spacer(modifier = Modifier.weight(1f))
+                        }
+                        
+                        Text(
+                            text = "${(progressState.value.progress * 100).toInt()}%",
+                            fontSize = 10.sp,
+                            color = MaterialTheme.colors.primary,
+                            modifier = Modifier.padding(start = 8.dp)
+                        )
+                    }
+                }
+            }
         }
     }
 }
@@ -319,6 +470,11 @@ fun SettingScreen(
                         showBorder = showBorder
                     ) { setting.action() }
 
+                    is ProgressActionSettingItem -> ProgressActionSettingItemUi(
+                        setting,
+                        showBorder = showBorder
+                    )
+
                     is BooleanSettingItem -> BooleanSettingItemUi(setting, showBorder)
                     is ValueSettingItem<*> -> ValueSettingItemUi(
                         setting,
@@ -336,7 +492,13 @@ fun SettingScreen(
                         showBorder
                     )
 
-                    is ListSettingWithStringItem -> ListSettingWithStringItemUi(
+                    is ListSettingWithStrResIdItem -> ListSettingWithStringItemUi(
+                        setting,
+                        dialogManager,
+                        showBorder
+                    )
+
+                    is ListSettingWithClassItem<*> -> ListSettingWithClassItemUi(
                         setting,
                         dialogManager,
                         showBorder
@@ -348,7 +510,7 @@ fun SettingScreen(
                     ) { linkAction(setting.url) }
 
                     is VersionSettingItem -> {
-                        val version = " v${BuildConfig.VERSION_NAME} (${BuildConfig.builtDateTime})"
+                        val version = " v${BuildConfig.VERSION_NAME} (${BuildConfig.lastCommitTime})"
                         SettingItemUi(setting, false, version, showBorder) {
                             navController.navigate(setting.destination.name)
                         }

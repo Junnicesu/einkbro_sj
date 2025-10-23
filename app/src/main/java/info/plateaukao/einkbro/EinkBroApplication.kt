@@ -22,8 +22,9 @@ import info.plateaukao.einkbro.browser.Cookie
 import info.plateaukao.einkbro.browser.Javascript
 import info.plateaukao.einkbro.database.BookmarkManager
 import info.plateaukao.einkbro.database.RecordDb
-import info.plateaukao.einkbro.pocket.PocketNetwork
 import info.plateaukao.einkbro.preference.ConfigManager
+import info.plateaukao.einkbro.search.suggestion.SearchSuggestionViewModel
+import info.plateaukao.einkbro.service.InstapaperRepository
 import info.plateaukao.einkbro.service.TtsManager
 import info.plateaukao.einkbro.unit.LocaleManager
 import io.github.edsuns.adfilter.AdFilter
@@ -56,7 +57,8 @@ class EinkBroApplication : Application() {
         single { Javascript(androidContext()) }
         single { Cookie(androidContext()) }
         single { ttsManager }
-        single { PocketNetwork() }
+        single { InstapaperRepository() }
+        single { SearchSuggestionViewModel() }
     }
 
     override fun onCreate() {
@@ -76,9 +78,6 @@ class EinkBroApplication : Application() {
         instance = this
 
         setupAdBlock()
-//        Thread.setDefaultUncaughtExceptionHandler(
-//            CustomExceptionHandler(Thread.getDefaultUncaughtExceptionHandler())
-//        )
     }
 
     private fun setupAdBlock() {
@@ -88,11 +87,11 @@ class EinkBroApplication : Application() {
 
         val filter = AdFilter.create(this)
         filter.setEnabled(config.adBlock)
-        val viewModel = filter.viewModel
-        GlobalScope.launch {
-            viewModel.workToFilterMap.collect { notifyDownloading(it.isEmpty()) }
+        if (config.adBlock) {
+            GlobalScope.launch {
+                filter.viewModel.workToFilterMap.collect { notifyDownloading(it.isEmpty()) }
+            }
         }
-
     }
 
     override fun onTerminate() {
