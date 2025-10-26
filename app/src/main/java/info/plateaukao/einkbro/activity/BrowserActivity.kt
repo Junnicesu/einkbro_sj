@@ -162,6 +162,7 @@ import info.plateaukao.einkbro.viewmodel.RemoteConnViewModel
 import info.plateaukao.einkbro.viewmodel.SplitSearchViewModel
 import info.plateaukao.einkbro.viewmodel.TRANSLATE_API
 import info.plateaukao.einkbro.viewmodel.TranslationViewModel
+import info.plateaukao.einkbro.viewmodel.TtsReadingState
 import info.plateaukao.einkbro.viewmodel.TtsViewModel
 import io.github.edsuns.adfilter.AdFilter
 import io.github.edsuns.adfilter.FilterViewModel
@@ -186,6 +187,8 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
     protected open var shouldRunClearService: Boolean = true
 
     private var mediaSessionHelper: MediaSessionHelper? = null
+    private var isMediaPlaying: Boolean = false
+    private var hasMediaElement: Boolean = false
 
     private var videoView: VideoView? = null
     private var customView: View? = null
@@ -391,9 +394,28 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
         initTranslationViewModel()
         initTtsViewModel()
 
-        // Setup MediaSession for TTS media button handling
+        // Setup MediaSession for media and TTS button handling
         mediaSessionHelper = MediaSessionHelper(this) {
-            ttsViewModel.pauseOrResume()
+            // Handle media button presses
+            // Priority: 1) Currently playing web media, 2) TTS, 3) Paused web media
+            when {
+                // If web media is currently playing, control it
+                isMediaPlaying -> {
+                    toggleWebMediaPlayback()
+                }
+                // If TTS is active (reading or paused), control TTS
+                ttsViewModel.isReading() -> {
+                    ttsViewModel.pauseOrResume()
+                }
+                // If web media exists but is paused, try to resume it
+                hasMediaElement -> {
+                    toggleWebMediaPlayback()
+                }
+                // Fallback: control TTS
+                else -> {
+                    ttsViewModel.pauseOrResume()
+                }
+            }
         }
 
         if (config.hideStatusbar) {
@@ -446,8 +468,14 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
 
     private fun initTtsViewModel() {
         lifecycleScope.launch {
-            ttsViewModel.readingState.collect { _ ->
+            ttsViewModel.readingState.collect { state ->
                 composeToolbarViewController.updateIcons()
+                // Update MediaSession state when TTS state changes
+                // Only update if no web media is currently active
+                if (!isMediaPlaying && !hasMediaElement) {
+                    val isTtsPlaying = state == TtsReadingState.PLAYING
+                    mediaSessionHelper?.setPlaybackState(isTtsPlaying)
+                }
             }
         }
     }
@@ -732,6 +760,17 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
     override fun toggleReaderMode() = ebWebView.toggleReaderMode()
     override fun toggleVerticalRead() = ebWebView.toggleVerticalRead()
     override fun updatePageInfo(info: String) = composeToolbarViewController.updatePageInfo(info)
+
+    override fun onMediaPlaybackStateChanged(isPlaying: Boolean) {
+        this.isMediaPlaying = isPlaying
+        this.hasMediaElement = true  // We know media exists if we got this callback
+        mediaSessionHelper?.setPlaybackState(isPlaying)
+    }
+
+    override fun resetMediaState() {
+        this.isMediaPlaying = false
+        this.hasMediaElement = false
+    }
 
     override fun sendPageUpKey() = ebWebView.sendPageUpKey()
     override fun sendPageDownKey() = ebWebView.sendPageDownKey()
@@ -2137,6 +2176,36 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
         if (this::ebWebView.isInitialized && ebWebView === currentAlbumController) {
             composeToolbarViewController.updateTitle(ebWebView.title.orEmpty())
         }
+    }
+
+    private fun toggleWebMediaPlayback() {
+        ebWebView.evaluateJavascript(
+            """
+            (function() {
+                // First try to find currently playing media
+                let media = document.querySelector('video:not([paused]), audio:not([paused])');
+                
+                // If no playing media, find any paused media that was previously playing
+                if (!media) {
+                    media = document.querySelector('video[paused], audio[paused]');
+                }
+                
+                // Fallback to any video/audio element
+                if (!media) {
+                    media = document.querySelector('video, audio');
+                }
+                
+                if (media) {
+                    if (media.paused) {
+                        media.play();
+                    } else {
+                        media.pause();
+                    }
+                }
+            })();
+            """.trimIndent(),
+            null
+        )
     }
 
     private fun scrollChange() {

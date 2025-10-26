@@ -140,4 +140,9 @@ interface BrowserController {
     fun rotateScreen()
     fun toggleReceiveLink()
     //endregion
+
+    //region Media Playback
+    fun onMediaPlaybackStateChanged(isPlaying: Boolean)
+    fun resetMediaState()
+    //endregion
 }

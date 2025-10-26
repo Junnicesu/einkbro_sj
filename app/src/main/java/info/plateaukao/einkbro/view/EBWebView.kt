@@ -206,6 +206,12 @@ open class EBWebView(
 
     private fun setupJsWebInterface() {
         addJavascriptInterface(JsWebInterface(this), "androidApp")
+        
+        // Add media playback detector
+        val mediaDetector = info.plateaukao.einkbro.browser.MediaPlaybackDetector { isPlaying ->
+            browserController?.onMediaPlaybackStateChanged(isPlaying)
+        }
+        addJavascriptInterface(mediaDetector, info.plateaukao.einkbro.browser.MediaPlaybackDetector.INTERFACE_NAME)
     }
 
     private fun updateDarkMode() {

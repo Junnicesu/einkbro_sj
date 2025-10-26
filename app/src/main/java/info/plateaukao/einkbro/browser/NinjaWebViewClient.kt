@@ -70,6 +70,9 @@ class EBWebViewClient(
     override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
         super.onPageStarted(view, url, favicon)
 
+        // Reset media state when navigating to a new page
+        ebWebView.browserController?.resetMediaState()
+
         if (config.adBlock) {
             adFilter.performScript(view, url)
         }
@@ -123,6 +126,9 @@ class EBWebViewClient(
                     }
         """.trimIndent(), null
         )
+
+        // Inject media playback detector
+        ebWebView.evaluateJavascript(MediaPlaybackDetector.INJECTION_SCRIPT, null)
 
         if (url != "about:blank") {
             onPageFinishedAction()

@@ -50,6 +50,25 @@ class MediaSessionHelper(
         isActive = true
     }
 
+    fun setPlaybackState(isPlaying: Boolean) {
+        val state = if (isPlaying) PlaybackState.STATE_PLAYING else PlaybackState.STATE_PAUSED
+        mediaSession.setPlaybackState(
+            PlaybackState.Builder()
+                .setState(state, PlaybackState.PLAYBACK_POSITION_UNKNOWN, 1.0f)
+                .setActions(
+                    PlaybackState.ACTION_PLAY or
+                    PlaybackState.ACTION_PAUSE or
+                    PlaybackState.ACTION_PLAY_PAUSE or
+                    PlaybackState.ACTION_SKIP_TO_NEXT or
+                    PlaybackState.ACTION_SKIP_TO_PREVIOUS or
+                    PlaybackState.ACTION_STOP
+                )
+                .build()
+        )
+        // Keep session active even when paused so Bluetooth controls remain available
+        mediaSession.isActive = true
+    }
+
     fun release() {
         mediaSession.release()
     }
