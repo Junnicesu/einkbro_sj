@@ -24,6 +24,7 @@ class EpubReaderView(
     browserController: BrowserController?,
 ) : EBWebView(context, browserController) {
     private lateinit var epub: EpubBook
+    var sUri: String = ""
     private val chapterList: ArrayList<Chapter> = ArrayList()
     var chapterNumber = 0
     var chapterPartPosition = 0

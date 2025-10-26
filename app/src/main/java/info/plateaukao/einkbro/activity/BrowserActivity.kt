@@ -140,6 +140,7 @@ import info.plateaukao.einkbro.view.viewControllers.OverviewDialogController
 import info.plateaukao.einkbro.view.viewControllers.TouchAreaViewController
 import info.plateaukao.einkbro.view.viewControllers.TwoPaneController
 import info.plateaukao.einkbro.viewmodel.ActionModeMenuState
+import info.plateaukao.einkbro.util.MediaSessionHelper
 import info.plateaukao.einkbro.viewmodel.ActionModeMenuState.DeeplTranslate
 import info.plateaukao.einkbro.viewmodel.ActionModeMenuState.GoogleTranslate
 import info.plateaukao.einkbro.viewmodel.ActionModeMenuState.Gpt
@@ -183,6 +184,8 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
     private lateinit var progressBar: ProgressBar
     protected lateinit var ebWebView: EBWebView
     protected open var shouldRunClearService: Boolean = true
+
+    private var mediaSessionHelper: MediaSessionHelper? = null
 
     private var videoView: VideoView? = null
     private var customView: View? = null
@@ -387,6 +390,11 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
         initExternalSearchCloseButton()
         initTranslationViewModel()
         initTtsViewModel()
+
+        // Setup MediaSession for TTS media button handling
+        mediaSessionHelper = MediaSessionHelper(this) {
+            ttsViewModel.pauseOrResume()
+        }
 
         if (config.hideStatusbar) {
             hideStatusBar()
@@ -1166,6 +1174,7 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
     }
 
     override fun onDestroy() {
+        mediaSessionHelper?.release()
         ttsViewModel.reset()
 
         updateSavedAlbumInfo()
