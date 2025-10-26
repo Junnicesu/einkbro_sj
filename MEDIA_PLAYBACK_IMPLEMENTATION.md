@@ -141,10 +141,11 @@ This ensures Bluetooth controls remain responsive whether media is playing or pa
 **Problem:** Once `hasMediaElement` was set to true, it never reset, so TTS could never be controlled even when no media was playing.
 
 **Solution:**
-1. Implemented smart priority system:
+1. Implemented smart priority system based on **actual playback state**:
    - **Priority 1:** Currently playing web media
-   - **Priority 2:** Active TTS (reading or paused)
-   - **Priority 3:** Paused web media
+   - **Priority 2:** Currently playing TTS (PLAYING state, not just paused)
+   - **Priority 3:** Paused web media (has higher priority than paused TTS)
+   - **Priority 4:** Paused/Preparing TTS
    - **Fallback:** TTS control
 
 2. Reset `hasMediaElement` flag when navigating to new page (`onPageStarted`)
@@ -153,17 +154,23 @@ This ensures Bluetooth controls remain responsive whether media is playing or pa
 
 **Code Logic:**
 ```kotlin
+val ttsState = ttsViewModel.readingState.value
+val isTtsPlaying = ttsState == TtsReadingState.PLAYING
+
 when {
     isMediaPlaying -> toggleWebMediaPlayback()           // Playing web media
-    ttsViewModel.isReading() -> ttsViewModel.pauseOrResume()  // Active TTS
+    isTtsPlaying -> ttsViewModel.pauseOrResume()         // Playing TTS
     hasMediaElement -> toggleWebMediaPlayback()          // Paused web media
+    ttsViewModel.isReading() -> ttsViewModel.pauseOrResume()  // Paused TTS
     else -> ttsViewModel.pauseOrResume()                 // Fallback
 }
 ```
 
 This ensures:
 - ✅ Web media controls work when media is playing
-- ✅ TTS controls work when TTS is active
+- ✅ Web media can be resumed even when TTS is paused
+- ✅ TTS controls work when TTS is actively playing
+- ✅ Paused web media has priority over paused TTS
 - ✅ Can resume paused web media
 - ✅ Flags reset on page navigation
 - ✅ Proper priority between different media sources

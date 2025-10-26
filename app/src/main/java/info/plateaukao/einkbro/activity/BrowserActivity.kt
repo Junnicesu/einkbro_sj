@@ -396,20 +396,28 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
 
         // Setup MediaSession for media and TTS button handling
         mediaSessionHelper = MediaSessionHelper(this) {
-            // Handle media button presses
-            // Priority: 1) Currently playing web media, 2) TTS, 3) Paused web media
+            // Handle media button presses with smart priority system
+            // Priority: 1) Currently playing media (web or TTS), 2) Paused media (web first, then TTS)
+            val ttsState = ttsViewModel.readingState.value
+            val isTtsPlaying = ttsState == TtsReadingState.PLAYING
+            val isTtsPaused = ttsState == TtsReadingState.PAUSED
+            
             when {
                 // If web media is currently playing, control it
                 isMediaPlaying -> {
                     toggleWebMediaPlayback()
                 }
-                // If TTS is active (reading or paused), control TTS
-                ttsViewModel.isReading() -> {
+                // If TTS is currently playing (not just paused), control TTS
+                isTtsPlaying -> {
                     ttsViewModel.pauseOrResume()
                 }
-                // If web media exists but is paused, try to resume it
+                // If web media exists (even if paused), control it before paused TTS
                 hasMediaElement -> {
                     toggleWebMediaPlayback()
+                }
+                // If TTS is paused or in other state, control TTS
+                ttsViewModel.isReading() -> {
+                    ttsViewModel.pauseOrResume()
                 }
                 // Fallback: control TTS
                 else -> {
