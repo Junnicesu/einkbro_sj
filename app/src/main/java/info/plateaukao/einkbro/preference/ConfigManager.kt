@@ -98,6 +98,7 @@ class ConfigManager(
     var enableImages by BooleanPreference(sp, K_ENABLE_IMAGES, true)
     var enableVideoAutoFullscreen by BooleanPreference(sp, K_ENABLE_VIDEO_AUTO_FULLSCREEN, false)
     var enableVideoPip by BooleanPreference(sp, K_ENABLE_VIDEO_PIP, false)
+    var videoCompressedMode by BooleanPreference(sp, K_VIDEO_COMPRESSED, false)
     var autoUpdateAdblock by BooleanPreference(sp, K_AUTO_UPDATE_ADBLOCK, false)
     var enableCertificateErrorDialog by BooleanPreference(sp, CERTIFICATE_ERROR_DIALOG, true)
     var closeTabWhenNoMoreBackHistory by BooleanPreference(sp, K_CLOSE_TAB_WHEN_BACK, true)
@@ -944,6 +945,7 @@ class ConfigManager(
         const val K_ENABLE_IMAGES = "SP_IMAGES_9"
         const val K_ENABLE_VIDEO_AUTO_FULLSCREEN = "sp_video_auto_fullscreen"
         const val K_ENABLE_VIDEO_PIP = "sp_video_auto_pip"
+        const val K_VIDEO_COMPRESSED = "sp_video_compressed"
         const val K_ADBLOCK_HOSTS_URL = "ab_hosts"
         const val K_AUTO_UPDATE_ADBLOCK = "sp_auto_update_adblock"
         const val CERTIFICATE_ERROR_DIALOG = "sp_certificate_error_dialog"

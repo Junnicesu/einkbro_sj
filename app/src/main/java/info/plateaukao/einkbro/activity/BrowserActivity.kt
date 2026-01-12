@@ -191,6 +191,7 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
     private var hasMediaElement: Boolean = false
 
     private var videoView: VideoView? = null
+    private var videoAspectRatioButton: ImageButton? = null
     private var customView: View? = null
     private var languageLabelView: TextView? = null
 
@@ -2368,6 +2369,28 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
                 videoView?.setOnCompletionListener(VideoCompletionListener())
             }
         }
+
+        // Add aspect ratio control button
+        videoAspectRatioButton = ImageButton(this).apply {
+            setImageResource(R.drawable.ic_aspect_ratio)
+            setBackgroundColor(0x80000000.toInt()) // Semi-transparent black
+            setColorFilter(android.graphics.Color.WHITE)
+            alpha = if (config.videoCompressedMode) 1.0f else 0.7f
+            val size = (48 * resources.displayMetrics.density).toInt()
+            val margin = (16 * resources.displayMetrics.density).toInt()
+            layoutParams = FrameLayout.LayoutParams(size, size).apply {
+                gravity = Gravity.TOP or Gravity.END
+                setMargins(margin, margin, margin, margin)
+            }
+            setOnClickListener { toggleVideoAspectRatio() }
+        }
+        fullscreenHolder?.addView(videoAspectRatioButton)
+
+        // Apply initial compression state
+        if (config.videoCompressedMode) {
+            applyVideoCompression(true)
+        }
+
         customViewCallback = callback
         requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
     }
@@ -2401,9 +2424,55 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
             videoView?.setOnCompletionListener(null)
             videoView = null
         }
+        videoAspectRatioButton = null
         requestedOrientation = originalOrientation
 
         return true
+    }
+
+    private fun toggleVideoAspectRatio() {
+        config.videoCompressedMode = !config.videoCompressedMode
+        applyVideoCompression(config.videoCompressedMode)
+
+        // Update button appearance to indicate state
+        videoAspectRatioButton?.alpha = if (config.videoCompressedMode) 1.0f else 0.7f
+    }
+
+    private fun applyVideoCompression(compress: Boolean) {
+        // Apply vertical squash using scaleY to truly compress height
+        val targetScale = if (compress) 0.5f else 1.0f
+        // Prefer scaling the actual video child if present; otherwise scale the customView container
+        val container = customView
+        if (container is FrameLayout) {
+            val child = container.focusedChild ?: (if (container.childCount > 0) container.getChildAt(0) else null)
+            val targetView = when (child) {
+                is VideoView -> child
+                else -> child ?: container
+            }
+            targetView.apply {
+                pivotY = height / 2f
+                pivotX = width / 2f
+                scaleY = targetScale
+                // keep full width; ensure layout remains match parent to avoid extra letterbox
+                if (layoutParams is FrameLayout.LayoutParams) {
+                    val lp = layoutParams as FrameLayout.LayoutParams
+                    lp.width = FrameLayout.LayoutParams.MATCH_PARENT
+                    lp.height = FrameLayout.LayoutParams.MATCH_PARENT
+                    lp.gravity = Gravity.CENTER
+                    layoutParams = lp
+                }
+                requestLayout()
+                invalidate()
+            }
+        } else {
+            container?.apply {
+                pivotY = height / 2f
+                pivotX = width / 2f
+                scaleY = targetScale
+                requestLayout()
+                invalidate()
+            }
+        }
     }
 
     private var previousKeyEvent: KeyEvent? = null
@@ -2925,4 +2994,6 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
         const val ACTION_READ_ALOUD = "action_read_aloud"
     }
 }
+
+
 
