@@ -2439,6 +2439,9 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
     }
 
     private fun applyVideoCompression(compress: Boolean) {
+        // Paint margins black when squashed
+        fullscreenHolder?.setBackgroundColor(if (compress) android.graphics.Color.BLACK else android.graphics.Color.TRANSPARENT)
+
         // Apply vertical squash using scaleY to truly compress height
         val targetScale = if (compress) 0.5f else 1.0f
         // Prefer scaling the actual video child if present; otherwise scale the customView container
@@ -2971,16 +2974,6 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
         actionModeMenuViewModel.show()
     }
 
-    override fun onPause() {
-        super.onPause()
-        actionModeMenuViewModel.finish()
-        if (!config.continueMedia && !isMeetPipCriteria()) {
-            if (this::ebWebView.isInitialized) {
-                ebWebView.pauseTimers()
-            }
-        }
-    }
-
     override fun onActionModeFinished(mode: ActionMode?) {
         super.onActionModeFinished(mode)
         mode?.hide(1000000)
@@ -2994,6 +2987,8 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
         const val ACTION_READ_ALOUD = "action_read_aloud"
     }
 }
+
+
 
 
 
