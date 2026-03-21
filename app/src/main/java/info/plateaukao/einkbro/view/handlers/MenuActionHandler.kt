@@ -114,6 +114,7 @@ class MenuActionHandler(
 
             MenuItemType.ChatWithWeb -> browserController.chatWithWeb()
             MenuItemType.Instapaper -> browserController.addToInstapaper()
+            MenuItemType.BrowserSbs -> browserController.toggleBrowserSbsMode()
         }
     }
 

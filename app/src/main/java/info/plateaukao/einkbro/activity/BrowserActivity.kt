@@ -17,6 +17,8 @@ import android.content.SharedPreferences
 import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.content.res.Configuration
+import android.graphics.Bitmap
+import android.graphics.Matrix
 import android.graphics.Point
 import android.graphics.PorterDuff
 import android.graphics.Rect
@@ -26,12 +28,15 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
+import android.os.Handler
+import android.os.Looper
 import android.os.Message
 import android.view.ActionMode
 import android.view.Gravity
 import android.view.KeyEvent
 import android.view.KeyEvent.ACTION_DOWN
 import android.view.MotionEvent
+import android.view.PixelCopy
 import android.view.View
 import android.view.View.GONE
 import android.view.View.INVISIBLE
@@ -108,6 +113,7 @@ import info.plateaukao.einkbro.util.TranslationLanguage
 import info.plateaukao.einkbro.view.EBToast
 import info.plateaukao.einkbro.view.EBWebView
 import info.plateaukao.einkbro.view.MultitouchListener
+import info.plateaukao.einkbro.view.SbsMirrorOverlayView
 import info.plateaukao.einkbro.view.SwipeTouchListener
 import info.plateaukao.einkbro.view.dialog.BookmarkEditDialog
 import info.plateaukao.einkbro.view.dialog.DialogManager
@@ -194,6 +200,15 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
     private var videoAspectRatioButton: ImageButton? = null
     private var customView: View? = null
     private var languageLabelView: TextView? = null
+
+    // SBS (Cardboard) mode state
+    private enum class SbsMode { OFF, BROWSER_MIRROR, FULLSCREEN_VIDEO_NORMAL2D, FULLSCREEN_VIDEO_HBS }
+    private var sbsMode: SbsMode = SbsMode.OFF
+    private var sbsMirrorOverlay: SbsMirrorOverlayView? = null
+    private var sbsInwardMarginBar: View? = null
+    private val sbsMirrorHandler = Handler(Looper.getMainLooper())
+    private var sbsMirrorRefreshRunning = false
+    private var sbsVideoHbsToggleButton: ImageButton? = null
 
     // Layouts
     private lateinit var mainContentLayout: FrameLayout
@@ -1193,8 +1208,18 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
         dispatchIntent(intent)
     }
 
+    override fun onPause() {
+        super.onPause()
+        // Pause SBS mirror capture to avoid wasting CPU in background
+        stopSbsMirrorRefresh()
+    }
+
     override fun onResume() {
         super.onResume()
+        // Restart SBS mirror refresh if it was active
+        if (sbsMode == SbsMode.BROWSER_MIRROR || sbsMode == SbsMode.FULLSCREEN_VIDEO_NORMAL2D) {
+            startSbsMirrorRefresh()
+        }
         if (config.restartChanged) {
             config.restartChanged = false
             dialogManager.showRestartConfirmDialog()
@@ -1224,6 +1249,12 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
     override fun onDestroy() {
         mediaSessionHelper?.release()
         ttsViewModel.reset()
+
+        // Clean up SBS mode
+        stopSbsMirrorRefresh()
+        if (sbsMode != SbsMode.OFF) {
+            teardownSbsOverlayViews()
+        }
 
         updateSavedAlbumInfo()
 
@@ -2393,6 +2424,11 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
 
         customViewCallback = callback
         requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
+
+        // Activate SBS video mode if browser SBS mirror was running
+        if (sbsMode == SbsMode.BROWSER_MIRROR) {
+            handleSbsOnShowCustomView()
+        }
     }
 
     override fun onHideCustomView(): Boolean {
@@ -2426,6 +2462,11 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
         }
         videoAspectRatioButton = null
         requestedOrientation = originalOrientation
+
+        // Return to browser SBS mirror mode if we were in SBS fullscreen video
+        if (sbsMode == SbsMode.FULLSCREEN_VIDEO_NORMAL2D || sbsMode == SbsMode.FULLSCREEN_VIDEO_HBS) {
+            handleSbsOnHideCustomView()
+        }
 
         return true
     }
@@ -2851,6 +2892,18 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
         twoPaneController.showSecondPaneWithUrl(url ?: ebWebView.url.orEmpty())
     }
 
+    override fun toggleBrowserSbsMode() {
+        if (sbsMode != SbsMode.OFF) {
+            exitBrowserSbsMode()
+        } else {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+                EBToast.show(this, "SBS mode requires Android 8.0+")
+                return
+            }
+            enterBrowserSbsMode()
+        }
+    }
+
     private fun nextAlbumController(next: Boolean): AlbumController? {
         if (browserContainer.size() <= 1) {
             return currentAlbumController
@@ -2982,9 +3035,222 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
 
     // - action mode handling
 
+    // ===================== SBS (Cardboard) Mode =====================
+
+    private fun enterBrowserSbsMode() {
+        config.sbsMirrorMode = true
+        sbsMode = SbsMode.BROWSER_MIRROR
+        requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+        binding.root.post { setupSbsOverlayViews() }
+        EBToast.show(this, R.string.sbs_mode_on)
+        composeToolbarViewController.updateIcons()
+    }
+
+    private fun exitBrowserSbsMode() {
+        config.sbsMirrorMode = false
+        sbsMode = SbsMode.OFF
+        stopSbsMirrorRefresh()
+        teardownSbsOverlayViews()
+        requestedOrientation = originalOrientation
+        EBToast.show(this, R.string.sbs_mode_off)
+        composeToolbarViewController.updateIcons()
+    }
+
+    private fun setupSbsOverlayViews() {
+        val decorView = window.decorView as FrameLayout
+        val screenWidth = decorView.width
+        val halfWidth = screenWidth / 2
+        val inwardPx = (config.sbsInwardMarginDp * resources.displayMetrics.density).toInt()
+
+        if (sbsInwardMarginBar == null) {
+            sbsInwardMarginBar = View(this).apply {
+                setBackgroundColor(android.graphics.Color.BLACK)
+                isClickable = false
+            }
+            val barParams = FrameLayout.LayoutParams(
+                inwardPx, FrameLayout.LayoutParams.MATCH_PARENT
+            ).apply {
+                gravity = Gravity.TOP or Gravity.START
+                leftMargin = halfWidth - inwardPx
+            }
+            decorView.addView(sbsInwardMarginBar, barParams)
+        }
+
+        if (sbsMirrorOverlay == null) {
+            sbsMirrorOverlay = SbsMirrorOverlayView(this).apply {
+                isClickable = true
+                isFocusable = false
+            }
+            val overlayParams = FrameLayout.LayoutParams(
+                halfWidth, FrameLayout.LayoutParams.MATCH_PARENT
+            ).apply {
+                gravity = Gravity.TOP or Gravity.END
+            }
+            decorView.addView(sbsMirrorOverlay, overlayParams)
+        }
+        startSbsMirrorRefresh()
+    }
+
+    private fun teardownSbsOverlayViews() {
+        val decorView = window.decorView as FrameLayout
+        sbsMirrorOverlay?.let { v ->
+            v.release()
+            if (v.parent != null) decorView.removeView(v)
+        }
+        sbsMirrorOverlay = null
+        sbsInwardMarginBar?.let { v -> if (v.parent != null) decorView.removeView(v) }
+        sbsInwardMarginBar = null
+    }
+
+    private fun startSbsMirrorRefresh() {
+        if (sbsMirrorRefreshRunning) return
+        sbsMirrorRefreshRunning = true
+        sbsMirrorHandler.post(sbsMirrorRunnable)
+    }
+
+    private fun stopSbsMirrorRefresh() {
+        sbsMirrorRefreshRunning = false
+        sbsMirrorHandler.removeCallbacks(sbsMirrorRunnable)
+    }
+
+    private val sbsMirrorRunnable: Runnable = object : Runnable {
+        override fun run() {
+            if (!sbsMirrorRefreshRunning) return
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                captureAndUpdateSbsMirror()
+            }
+            sbsMirrorHandler.postDelayed(this, MIRROR_REFRESH_INTERVAL_MS)
+        }
+    }
+
+    @androidx.annotation.RequiresApi(Build.VERSION_CODES.O)
+    private fun captureAndUpdateSbsMirror() {
+        val overlay = sbsMirrorOverlay ?: return
+        val decorView = window.decorView
+        val sw = decorView.width
+        val sh = decorView.height
+        if (sw <= 0 || sh <= 0) return
+
+        val halfWidth = sw / 2
+        val inwardPx = (config.sbsInwardMarginDp * resources.displayMetrics.density).toInt()
+        val captureWidth = (halfWidth - inwardPx).coerceAtLeast(1)
+
+        val bitmap = Bitmap.createBitmap(captureWidth, sh, Bitmap.Config.ARGB_8888)
+        PixelCopy.request(
+            window,
+            Rect(0, 0, captureWidth, sh),
+            bitmap,
+            { result ->
+                if (result == PixelCopy.SUCCESS) {
+                    val matrix = Matrix().apply { preScale(-1f, 1f, captureWidth / 2f, 0f) }
+                    val flipped = Bitmap.createBitmap(bitmap, 0, 0, captureWidth, sh, matrix, false)
+                    bitmap.recycle()
+                    overlay.updateMirrorBitmap(flipped)
+                } else {
+                    bitmap.recycle()
+                }
+            },
+            Handler(Looper.getMainLooper())
+        )
+    }
+
+    /** Called from onShowCustomView when browser SBS mirror is active. */
+    private fun handleSbsOnShowCustomView() {
+        stopSbsMirrorRefresh()
+        // Use videoCompressedMode as proxy: squash=ON likely means HBS content
+        val isHbs = config.videoCompressedMode
+        if (isHbs) {
+            sbsMode = SbsMode.FULLSCREEN_VIDEO_HBS
+            sbsMirrorOverlay?.visibility = GONE
+            sbsInwardMarginBar?.visibility = GONE
+            EBToast.show(this, R.string.sbs_fullscreen_hbs)
+        } else {
+            sbsMode = SbsMode.FULLSCREEN_VIDEO_NORMAL2D
+            // Bring SBS overlays above the newly-added fullscreenHolder
+            sbsInwardMarginBar?.bringToFront()
+            sbsMirrorOverlay?.bringToFront()
+            startSbsMirrorRefresh()
+            EBToast.show(this, R.string.sbs_fullscreen_normal2d)
+        }
+        addSbsHbsToggleButton()
+    }
+
+    /** Called from onHideCustomView when returning from SBS fullscreen video mode. */
+    private fun handleSbsOnHideCustomView() {
+        removeSbsHbsToggleButton()
+        sbsMode = SbsMode.BROWSER_MIRROR
+        val overlayAttached = sbsMirrorOverlay?.parent != null
+        val barAttached = sbsInwardMarginBar?.parent != null
+        if (!overlayAttached || !barAttached) {
+            teardownSbsOverlayViews()
+            binding.root.post { setupSbsOverlayViews() }
+        } else {
+            sbsMirrorOverlay?.visibility = VISIBLE
+            sbsInwardMarginBar?.visibility = VISIBLE
+            sbsInwardMarginBar?.bringToFront()
+            sbsMirrorOverlay?.bringToFront()
+            startSbsMirrorRefresh()
+        }
+    }
+
+    private fun addSbsHbsToggleButton() {
+        val decorView = window.decorView as FrameLayout
+        val iconRes = if (sbsMode == SbsMode.FULLSCREEN_VIDEO_HBS)
+            R.drawable.ic_sbs_mode_active else R.drawable.ic_aspect_ratio
+        val density = resources.displayMetrics.density
+        val sizePx = (48 * density).toInt()
+        val marginPx = (8 * density).toInt()
+        sbsVideoHbsToggleButton = ImageButton(this).apply {
+            setImageResource(iconRes)
+            setBackgroundColor(0x80000000.toInt())
+            setColorFilter(android.graphics.Color.WHITE)
+            alpha = 0.85f
+            layoutParams = FrameLayout.LayoutParams(sizePx, sizePx).apply {
+                gravity = Gravity.TOP or Gravity.START
+                // Position below the aspect-ratio button (which is at top+margin)
+                setMargins(marginPx, marginPx + sizePx + marginPx, marginPx, marginPx)
+            }
+            setOnClickListener { toggleSbsVideoHbsMode() }
+        }
+        decorView.addView(sbsVideoHbsToggleButton)
+    }
+
+    private fun removeSbsHbsToggleButton() {
+        val decorView = window.decorView as FrameLayout
+        sbsVideoHbsToggleButton?.let { v -> if (v.parent != null) decorView.removeView(v) }
+        sbsVideoHbsToggleButton = null
+    }
+
+    private fun toggleSbsVideoHbsMode() {
+        when (sbsMode) {
+            SbsMode.FULLSCREEN_VIDEO_NORMAL2D -> {
+                sbsMode = SbsMode.FULLSCREEN_VIDEO_HBS
+                stopSbsMirrorRefresh()
+                sbsMirrorOverlay?.visibility = GONE
+                sbsInwardMarginBar?.visibility = GONE
+                sbsVideoHbsToggleButton?.setImageResource(R.drawable.ic_sbs_mode_active)
+                EBToast.show(this, R.string.sbs_fullscreen_hbs)
+            }
+            SbsMode.FULLSCREEN_VIDEO_HBS -> {
+                sbsMode = SbsMode.FULLSCREEN_VIDEO_NORMAL2D
+                sbsMirrorOverlay?.visibility = VISIBLE
+                sbsInwardMarginBar?.visibility = VISIBLE
+                sbsInwardMarginBar?.bringToFront()
+                sbsMirrorOverlay?.bringToFront()
+                startSbsMirrorRefresh()
+                sbsVideoHbsToggleButton?.setImageResource(R.drawable.ic_aspect_ratio)
+                EBToast.show(this, R.string.sbs_fullscreen_normal2d)
+            }
+            else -> Unit
+        }
+    }
+
+    // ===================== End SBS Mode =====================
+
     companion object {
         private const val K_SHOULD_LOAD_TAB_STATE = "k_should_load_tab_state"
         const val ACTION_READ_ALOUD = "action_read_aloud"
+        private const val MIRROR_REFRESH_INTERVAL_MS = 33L  // ~30 fps
     }
 }
 

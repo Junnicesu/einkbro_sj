@@ -16,6 +16,7 @@ import info.plateaukao.einkbro.view.compose.ComposedToolbar
 import info.plateaukao.einkbro.view.compose.MyTheme
 import info.plateaukao.einkbro.view.toolbaricons.ToolbarAction
 import info.plateaukao.einkbro.view.toolbaricons.ToolbarAction.BoldFont
+import info.plateaukao.einkbro.view.toolbaricons.ToolbarAction.BrowserSbs
 import info.plateaukao.einkbro.view.toolbaricons.ToolbarAction.CloseTab
 import info.plateaukao.einkbro.view.toolbaricons.ToolbarAction.Desktop
 import info.plateaukao.einkbro.view.toolbaricons.ToolbarAction.Font
@@ -124,6 +125,7 @@ class ComposeToolbarViewController(
         return this.map { toolbarAction ->
             when (toolbarAction) {
                 BoldFont -> ToolbarActionInfo(toolbarAction, config.boldFontStyle)
+                BrowserSbs -> ToolbarActionInfo(toolbarAction, config.sbsMirrorMode)
                 Refresh -> ToolbarActionInfo(toolbarAction, isLoading)
                 Desktop -> ToolbarActionInfo(toolbarAction, config.desktop)
                 Touch -> ToolbarActionInfo(toolbarAction, config.enableTouchTurn)

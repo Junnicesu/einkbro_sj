@@ -630,4 +630,12 @@
     <string name="suggestion">"Search: "</string>
     <string name="setting_title_search_suggestion">Search suggestions</string>
     <string name="setting_summary_search_suggestion">"while inputting content, show search suggestions "</string>
+
+    <!-- SBS (Side-by-Side) Cardboard mode -->
+    <string name="browser_sbs_mode">SBS Mode</string>
+    <string name="sbs_mode_on">SBS Cardboard mode enabled</string>
+    <string name="sbs_mode_off">SBS Cardboard mode disabled</string>
+    <string name="sbs_fullscreen_hbs">HBS mode: full-screen (no mirror)</string>
+    <string name="sbs_fullscreen_normal2d">Normal 2D mode: mirroring for SBS</string>
+    <string name="sbs_toggle_hbs">Toggle HBS/2D</string>
 </resources>

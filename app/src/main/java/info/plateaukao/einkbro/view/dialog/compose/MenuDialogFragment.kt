@@ -112,6 +112,7 @@ class MenuDialogFragment(
                 config.showShareSaveMenu,
                 config.showContentMenu,
                 config.hasInvertedColor(url),
+                config.sbsMirrorMode,
                 { config::showShareSaveMenu.toggle() },
                 { config::showContentMenu.toggle() },
                 { dialog?.dismiss(); itemClicked(it) },
@@ -135,7 +136,8 @@ enum class MenuItemType {
     ReceiveData, SendLink, ShareLink, OpenWith, CopyLink, Shortcut,
     SetHome, SaveBookmark, OpenEpub, SaveEpub, SavePdf,
     FontSize, WhiteBknd, BoldFont, Search, Download, Settings, BlackFont,
-    SaveArchive, Highlights, InvertColor, ChatWithWeb, Instapaper
+    SaveArchive, Highlights, InvertColor, ChatWithWeb, Instapaper,
+    BrowserSbs
 }
 
 @Composable
@@ -147,6 +149,7 @@ private fun MenuItems(
     showShareSaveMenu: Boolean,
     showContentMenu: Boolean,
     hasInvertedColor: Boolean,
+    isSbsActive: Boolean,
     toggleShareSaveMenu: () -> Unit,
     toggleContentMenu: () -> Unit,
     onClicked: (MenuItemType) -> Unit,
@@ -285,6 +288,11 @@ private fun MenuItems(
                     R.string.split_screen,
                     Icons.Outlined.ViewStream,
                 ) { onClicked(MenuItemType.SplitScreen) }
+                val sbsRes = if (isSbsActive) R.drawable.ic_sbs_mode_active else R.drawable.ic_sbs_mode
+                MenuItem(
+                    R.string.browser_sbs_mode,
+                    sbsRes,
+                ) { onClicked(MenuItemType.BrowserSbs) }
                 MenuItem(
                     R.string.translate,
                     Icons.Outlined.Translate,
@@ -529,6 +537,7 @@ private fun PreviewMenuItems() {
             showShareSaveMenu = false,
             showContentMenu = false,
             hasInvertedColor = false,
+            isSbsActive = false,
             {},
             {},
             {},

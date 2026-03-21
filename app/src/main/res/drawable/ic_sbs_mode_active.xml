@@ -1,0 +1,23 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:tint="?attr/colorControlNormal"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- Left pane filled -->
+    <path
+        android:fillColor="#000000"
+        android:pathData="M2,4 L11,4 L11,20 L2,20 Z" />
+    <!-- Right pane filled -->
+    <path
+        android:fillColor="#000000"
+        android:pathData="M13,4 L22,4 L22,20 L13,20 Z" />
+    <!-- Highlight lines to indicate active/mirror state -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M3.5,8 L9.5,8 L9.5,9.5 L3.5,9.5 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M14.5,8 L20.5,8 L20.5,9.5 L14.5,9.5 Z" />
+</vector>
+

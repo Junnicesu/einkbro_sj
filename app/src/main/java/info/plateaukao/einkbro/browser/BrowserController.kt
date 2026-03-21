@@ -35,6 +35,7 @@ interface BrowserController {
     fun showOverview()
     fun toggleFullscreen()
     fun toggleSplitScreen(url: String? = null)
+    fun toggleBrowserSbsMode()
     //endregion
 
     //region History and Bookmarks

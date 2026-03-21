@@ -175,6 +175,15 @@ enum class ToolbarAction(
     ChatWithWeb(
         imageVector = Icons.AutoMirrored.Outlined.Chat,
         titleResId = R.string.chat_with_web,
+    ),
+    BrowserSbs(
+        iconResId = R.drawable.ic_sbs_mode,
+        titleResId = R.string.browser_sbs_mode,
+        iconActiveInfo = IconActiveInfo(
+            isActivable = true,
+            activeResId = R.drawable.ic_sbs_mode_active,
+            inactiveResId = R.drawable.ic_sbs_mode
+        )
     )
     ;
 
