@@ -55,7 +55,6 @@ import android.widget.TextView
 import android.widget.VideoView
 import androidx.activity.result.ActivityResult
 import androidx.activity.result.ActivityResultLauncher
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.annotation.RequiresApi
 import androidx.compose.runtime.mutableStateOf
@@ -112,8 +111,8 @@ import info.plateaukao.einkbro.util.TranslationLanguage
 import info.plateaukao.einkbro.view.EBToast
 import info.plateaukao.einkbro.view.EBWebView
 import info.plateaukao.einkbro.view.MultitouchListener
-import info.plateaukao.einkbro.view.SbsCopyOverlayView
 import info.plateaukao.einkbro.view.SbsDualRenderContainer
+import info.plateaukao.einkbro.view.SbsMirrorOverlayView
 import info.plateaukao.einkbro.view.SwipeTouchListener
 import info.plateaukao.einkbro.view.dialog.BookmarkEditDialog
 import info.plateaukao.einkbro.view.dialog.DialogManager
@@ -202,14 +201,15 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
     private var languageLabelView: TextView? = null
 
     // SBS (Cardboard) mode state
-    private enum class SbsMode { OFF, BROWSER_COPY, FULLSCREEN_VIDEO_NORMAL2D, FULLSCREEN_VIDEO_HBS }
+    private enum class SbsMode { OFF, BROWSER_MIRROR, FULLSCREEN_VIDEO_NORMAL2D, FULLSCREEN_VIDEO_HBS }
     private var sbsMode: SbsMode = SbsMode.OFF
-    private lateinit var sbsRenderContainer: SbsDualRenderContainer
-    private var sbsCopyOverlay: SbsCopyOverlayView? = null
-    private var sbsInwardMarginBar: View? = null
+    private var sbsDualRenderContainer: SbsDualRenderContainer? = null
+    private var sbsMirrorOverlay: SbsMirrorOverlayView? = null
+    private var sbsLeftSafeMarginBar: View? = null
+    private var sbsRightSafeMarginBar: View? = null
+    private var sbsCenterDividerBar: View? = null
     private val sbsMirrorHandler = Handler(Looper.getMainLooper())
     private var sbsMirrorRefreshRunning = false
-    private var sbsCopyInFlight = false
     private var sbsVideoHbsToggleButton: ImageButton? = null
 
     // Layouts
@@ -371,16 +371,20 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
 
         config.restartChanged = false
         HelperUnit.applyTheme(this)
-        sbsRenderContainer = SbsDualRenderContainer(this).apply {
+        sbsDualRenderContainer = SbsDualRenderContainer(this).apply {
+            layoutParams = ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            )
             addView(
                 binding.root,
-                FrameLayout.LayoutParams(
-                    FrameLayout.LayoutParams.MATCH_PARENT,
-                    FrameLayout.LayoutParams.MATCH_PARENT,
-                )
+                ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                ),
             )
         }
-        setContentView(sbsRenderContainer)
+        setContentView(sbsDualRenderContainer)
 
         orientation = resources.configuration.orientation
 
@@ -399,10 +403,12 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
         downloadReceiver = createDownloadReceiver(this)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             registerReceiver(
-                downloadReceiver, IntentFilter(ACTION_DOWNLOAD_COMPLETE),
-                RECEIVER_NOT_EXPORTED
+                downloadReceiver,
+                IntentFilter(ACTION_DOWNLOAD_COMPLETE),
+                RECEIVER_NOT_EXPORTED,
             )
         } else {
+            @SuppressLint("UnspecifiedRegisterReceiverFlag")
             registerReceiver(downloadReceiver, IntentFilter(ACTION_DOWNLOAD_COMPLETE))
         }
 
@@ -491,14 +497,26 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
     }
 
     private fun requestNotificationPermission() {
-        val requestPermissionLauncher =
-            registerForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted: Boolean ->
-                if (isGranted) {
-                    checkAdBlockerList()
-                } else {
-                }
-            }
-        requestPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            requestPermissions(
+                arrayOf(Manifest.permission.POST_NOTIFICATIONS),
+                REQUEST_NOTIFICATION_PERMISSION,
+            )
+        }
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray,
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQUEST_NOTIFICATION_PERMISSION &&
+            grantResults.isNotEmpty() &&
+            grantResults[0] == PackageManager.PERMISSION_GRANTED
+        ) {
+            checkAdBlockerList()
+        }
     }
 
     private fun initTtsViewModel() {
@@ -692,7 +710,7 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
                 if (shouldShow) {
                     val point = actionModeMenuViewModel.clickedPoint.value
                     // when it's first time to show action mode view
-                    // need to wait until width and height are available
+                    // need to wait until width and height is available
                     if (view.width == 0 || view.height == 0) {
                         view.post {
                             ViewUnit.updateViewPosition(view, point)
@@ -1132,6 +1150,8 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
         }
     }
 
+    @Suppress("MissingSuperCall")
+    @SuppressLint("MissingSuperCall")
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
 
@@ -1146,7 +1166,7 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
 
     @RequiresApi(Build.VERSION_CODES.O)
     private fun enterPipMode() {
-        val params = PictureInPictureParams.Builder().build();
+        val params = PictureInPictureParams.Builder().build()
         enterPictureInPictureMode(params)
     }
 
@@ -1206,6 +1226,12 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
             composeToolbarViewController.updateIcons()
             orientation = newConfig.orientation
 
+            if (sbsMode == SbsMode.BROWSER_MIRROR) {
+                applyBrowserSbsLayout()
+            } else if (sbsMode == SbsMode.FULLSCREEN_VIDEO_NORMAL2D) {
+                setupSbsOverlayViews()
+            }
+
             if (config.fabPosition == FabPosition.Custom) {
                 fabImageViewController.updateImagePosition(orientation)
             }
@@ -1227,7 +1253,7 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
 
     override fun onResume() {
         super.onResume()
-        // Restart fullscreen SBS copy refresh if it was active
+        // Restart fullscreen SBS refresh only when overlay-based mode is active.
         if (sbsMode == SbsMode.FULLSCREEN_VIDEO_NORMAL2D) {
             startSbsMirrorRefresh()
         }
@@ -1265,6 +1291,7 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
         stopSbsMirrorRefresh()
         if (sbsMode != SbsMode.OFF) {
             teardownSbsOverlayViews()
+            sbsDualRenderContainer?.setSbsCopyEnabled(false)
         }
 
         updateSavedAlbumInfo()
@@ -2436,8 +2463,8 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
         customViewCallback = callback
         requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
 
-        // Activate SBS video mode if browser SBS copy was running
-        if (sbsMode == SbsMode.BROWSER_COPY) {
+        // Activate SBS video mode if browser SBS mirror was running
+        if (sbsMode == SbsMode.BROWSER_MIRROR) {
             handleSbsOnShowCustomView()
         }
     }
@@ -2907,10 +2934,6 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
         if (sbsMode != SbsMode.OFF) {
             exitBrowserSbsMode()
         } else {
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
-                EBToast.show(this, "SBS mode requires Android 8.0+")
-                return
-            }
             enterBrowserSbsMode()
         }
     }
@@ -3048,14 +3071,50 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
 
     // ===================== SBS (Cardboard) Mode =====================
 
+    private data class SbsGeometry(
+        val leftStart: Int,
+        val paneWidth: Int,
+        val rightStart: Int,
+        val dividerLeft: Int,
+        val dividerWidth: Int,
+    )
+
+    private fun computeSbsGeometry(screenWidth: Int): SbsGeometry {
+        val safeMarginPx = (config.sbsInwardMarginDp * resources.displayMetrics.density).toInt()
+        val dividerWidth = SBS_DIVIDER_WIDTH_PX
+        val maxSafe = ((screenWidth - dividerWidth) / 2 - 1).coerceAtLeast(0)
+        val safe = safeMarginPx.coerceIn(0, maxSafe)
+        val available = (screenWidth - safe * 2 - dividerWidth).coerceAtLeast(2)
+        val paneWidth = (available / 2).coerceAtLeast(1)
+        val leftStart = safe
+        val dividerLeft = leftStart + paneWidth
+        val rightStart = dividerLeft + dividerWidth
+        return SbsGeometry(
+            leftStart = leftStart,
+            paneWidth = paneWidth,
+            rightStart = rightStart,
+            dividerLeft = dividerLeft,
+            dividerWidth = dividerWidth,
+        )
+    }
+
+    private fun applyBrowserSbsLayout() {
+        val safeMarginPx = (config.sbsInwardMarginDp * resources.displayMetrics.density).toInt()
+        sbsDualRenderContainer?.setSbsLayout(safeMarginPx, SBS_DIVIDER_WIDTH_PX)
+        sbsDualRenderContainer?.setSbsCopyEnabled(true)
+    }
+
+    private fun clearBrowserSbsLayout() {
+        sbsDualRenderContainer?.setSbsCopyEnabled(false)
+    }
+
     private fun enterBrowserSbsMode() {
         config.sbsMirrorMode = true
-        sbsMode = SbsMode.BROWSER_COPY
+        sbsMode = SbsMode.BROWSER_MIRROR
         requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
-        binding.root.post {
-            val inwardPx = (config.sbsInwardMarginDp * resources.displayMetrics.density).toInt()
-            sbsRenderContainer.setSbsCopyEnabled(true, inwardPx)
-        }
+        stopSbsMirrorRefresh()
+        teardownSbsOverlayViews()
+        binding.root.post { applyBrowserSbsLayout() }
         EBToast.show(this, R.string.sbs_mode_on)
         composeToolbarViewController.updateIcons()
     }
@@ -3065,62 +3124,122 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
         sbsMode = SbsMode.OFF
         stopSbsMirrorRefresh()
         teardownSbsOverlayViews()
-        sbsRenderContainer.setSbsCopyEnabled(false, 0)
+        clearBrowserSbsLayout()
         requestedOrientation = originalOrientation
         EBToast.show(this, R.string.sbs_mode_off)
         composeToolbarViewController.updateIcons()
     }
 
+    private fun ensureOverlayBar(
+        current: View?,
+        color: Int,
+        left: Int,
+        width: Int,
+    ): View? {
+        val decorView = window.decorView as FrameLayout
+        if (width <= 0) {
+            current?.let { if (it.parent != null) decorView.removeView(it) }
+            return null
+        }
+
+        val view = (current ?: View(this).apply {
+            isClickable = false
+            isFocusable = false
+        }).apply {
+            setBackgroundColor(color)
+        }
+
+        val params = FrameLayout.LayoutParams(width, FrameLayout.LayoutParams.MATCH_PARENT).apply {
+            gravity = Gravity.TOP or Gravity.START
+            leftMargin = left
+        }
+
+        if (view.parent == null) {
+            decorView.addView(view, params)
+        } else {
+            view.layoutParams = params
+        }
+        return view
+    }
+
     private fun setupSbsOverlayViews() {
         val decorView = window.decorView as FrameLayout
         val screenWidth = decorView.width
-        val halfWidth = screenWidth / 2
-        val inwardPx = (config.sbsInwardMarginDp * resources.displayMetrics.density).toInt()
-
-        if (sbsInwardMarginBar == null) {
-            sbsInwardMarginBar = View(this).apply {
-                setBackgroundColor(android.graphics.Color.BLACK)
-                isClickable = false
+        if (screenWidth <= 0) {
+            decorView.post {
+                if (sbsMode == SbsMode.FULLSCREEN_VIDEO_NORMAL2D) {
+                    setupSbsOverlayViews()
+                }
             }
-            val barParams = FrameLayout.LayoutParams(
-                inwardPx, FrameLayout.LayoutParams.MATCH_PARENT
-            ).apply {
-                gravity = Gravity.TOP or Gravity.START
-                leftMargin = halfWidth - inwardPx
-            }
-            decorView.addView(sbsInwardMarginBar, barParams)
+            return
         }
+        val geometry = computeSbsGeometry(screenWidth)
 
-        if (sbsCopyOverlay == null) {
-            sbsCopyOverlay = SbsCopyOverlayView(this).apply {
+        sbsLeftSafeMarginBar = ensureOverlayBar(
+            current = sbsLeftSafeMarginBar,
+            color = android.graphics.Color.BLACK,
+            left = 0,
+            width = geometry.leftStart,
+        )
+
+        val rightSafeWidth = (screenWidth - (geometry.rightStart + geometry.paneWidth)).coerceAtLeast(0)
+        sbsRightSafeMarginBar = ensureOverlayBar(
+            current = sbsRightSafeMarginBar,
+            color = android.graphics.Color.BLACK,
+            left = geometry.rightStart + geometry.paneWidth,
+            width = rightSafeWidth,
+        )
+
+        sbsCenterDividerBar = ensureOverlayBar(
+            current = sbsCenterDividerBar,
+            color = android.graphics.Color.GRAY,
+            left = geometry.dividerLeft,
+            width = geometry.dividerWidth,
+        )
+
+        if (sbsMirrorOverlay == null) {
+            sbsMirrorOverlay = SbsMirrorOverlayView(this).apply {
                 isClickable = true
                 isFocusable = false
-                this.inwardMarginPx = inwardPx
             }
-            val overlayParams = FrameLayout.LayoutParams(
-                halfWidth, FrameLayout.LayoutParams.MATCH_PARENT
-            ).apply {
-                gravity = Gravity.TOP or Gravity.END
-            }
-            decorView.addView(sbsCopyOverlay, overlayParams)
-        } else {
-            sbsCopyOverlay?.inwardMarginPx = inwardPx
         }
+
+        val overlayParams = FrameLayout.LayoutParams(
+            geometry.paneWidth,
+            FrameLayout.LayoutParams.MATCH_PARENT,
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            leftMargin = geometry.rightStart
+        }
+        if (sbsMirrorOverlay?.parent == null) {
+            decorView.addView(sbsMirrorOverlay, overlayParams)
+        } else {
+            sbsMirrorOverlay?.layoutParams = overlayParams
+        }
+
+        sbsLeftSafeMarginBar?.bringToFront()
+        sbsRightSafeMarginBar?.bringToFront()
+        sbsCenterDividerBar?.bringToFront()
+        sbsMirrorOverlay?.bringToFront()
+        startSbsMirrorRefresh()
     }
 
     private fun teardownSbsOverlayViews() {
         val decorView = window.decorView as FrameLayout
-        sbsCopyOverlay?.let { v ->
+        sbsMirrorOverlay?.let { v ->
             v.release()
             if (v.parent != null) decorView.removeView(v)
         }
-        sbsCopyOverlay = null
-        sbsInwardMarginBar?.let { v -> if (v.parent != null) decorView.removeView(v) }
-        sbsInwardMarginBar = null
+        sbsMirrorOverlay = null
+        sbsLeftSafeMarginBar?.let { v -> if (v.parent != null) decorView.removeView(v) }
+        sbsRightSafeMarginBar?.let { v -> if (v.parent != null) decorView.removeView(v) }
+        sbsCenterDividerBar?.let { v -> if (v.parent != null) decorView.removeView(v) }
+        sbsLeftSafeMarginBar = null
+        sbsRightSafeMarginBar = null
+        sbsCenterDividerBar = null
     }
 
     private fun startSbsMirrorRefresh() {
-        if (sbsMode != SbsMode.FULLSCREEN_VIDEO_NORMAL2D) return
         if (sbsMirrorRefreshRunning) return
         sbsMirrorRefreshRunning = true
         sbsMirrorHandler.post(sbsMirrorRunnable)
@@ -3134,36 +3253,34 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
     private val sbsMirrorRunnable: Runnable = object : Runnable {
         override fun run() {
             if (!sbsMirrorRefreshRunning) return
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !sbsCopyInFlight) {
-                captureAndUpdateSbsCopy()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                captureAndUpdateSbsMirror()
             }
             sbsMirrorHandler.postDelayed(this, MIRROR_REFRESH_INTERVAL_MS)
         }
     }
 
     @androidx.annotation.RequiresApi(Build.VERSION_CODES.O)
-    private fun captureAndUpdateSbsCopy() {
-        val overlay = sbsCopyOverlay ?: return
+    private fun captureAndUpdateSbsMirror() {
+        val overlay = sbsMirrorOverlay ?: return
         val decorView = window.decorView
         val sw = decorView.width
         val sh = decorView.height
         if (sw <= 0 || sh <= 0) return
 
-        val halfWidth = sw / 2
-        val inwardPx = (config.sbsInwardMarginDp * resources.displayMetrics.density).toInt()
-        val captureWidth = (halfWidth - inwardPx).coerceAtLeast(1)
+        val geometry = computeSbsGeometry(sw)
+        val captureWidth = geometry.paneWidth
+        val captureLeft = geometry.leftStart
 
-        sbsCopyInFlight = true
         val bitmap = Bitmap.createBitmap(captureWidth, sh, Bitmap.Config.ARGB_8888)
         PixelCopy.request(
             window,
-            Rect(0, 0, captureWidth, sh),
+            Rect(captureLeft, 0, captureLeft + captureWidth, sh),
             bitmap,
             { result ->
-                sbsCopyInFlight = false
                 if (result == PixelCopy.SUCCESS) {
-                    // No flip — the right pane shows an identical copy of the left pane.
-                    overlay.updateCopyBitmap(bitmap)
+                    // Keep right pane as a direct copy, not a mirrored image.
+                    overlay.updateMirrorBitmap(bitmap)
                 } else {
                     bitmap.recycle()
                 }
@@ -3172,12 +3289,10 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
         )
     }
 
-    /** Called from onShowCustomView when browser SBS copy mode is active. */
+    /** Called from onShowCustomView when browser SBS mirror is active. */
     private fun handleSbsOnShowCustomView() {
-        // Browser SBS copy is now done by container dual-draw; disable it in fullscreen.
-        sbsRenderContainer.setSbsCopyEnabled(false, 0)
+        clearBrowserSbsLayout()
         stopSbsMirrorRefresh()
-
         // Use videoCompressedMode as proxy: squash=ON likely means HBS content
         val isHbs = config.videoCompressedMode
         if (isHbs) {
@@ -3187,9 +3302,6 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
         } else {
             sbsMode = SbsMode.FULLSCREEN_VIDEO_NORMAL2D
             setupSbsOverlayViews()
-            sbsInwardMarginBar?.bringToFront()
-            sbsCopyOverlay?.bringToFront()
-            startSbsMirrorRefresh()
             EBToast.show(this, R.string.sbs_fullscreen_normal2d)
         }
         addSbsHbsToggleButton()
@@ -3200,10 +3312,8 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
         removeSbsHbsToggleButton()
         stopSbsMirrorRefresh()
         teardownSbsOverlayViews()
-
-        sbsMode = SbsMode.BROWSER_COPY
-        val inwardPx = (config.sbsInwardMarginDp * resources.displayMetrics.density).toInt()
-        sbsRenderContainer.setSbsCopyEnabled(true, inwardPx)
+        sbsMode = SbsMode.BROWSER_MIRROR
+        applyBrowserSbsLayout()
     }
 
     private fun addSbsHbsToggleButton() {
@@ -3246,9 +3356,6 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
             SbsMode.FULLSCREEN_VIDEO_HBS -> {
                 sbsMode = SbsMode.FULLSCREEN_VIDEO_NORMAL2D
                 setupSbsOverlayViews()
-                sbsInwardMarginBar?.bringToFront()
-                sbsCopyOverlay?.bringToFront()
-                startSbsMirrorRefresh()
                 sbsVideoHbsToggleButton?.setImageResource(R.drawable.ic_aspect_ratio)
                 EBToast.show(this, R.string.sbs_fullscreen_normal2d)
             }
@@ -3262,6 +3369,13 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
         private const val K_SHOULD_LOAD_TAB_STATE = "k_should_load_tab_state"
         const val ACTION_READ_ALOUD = "action_read_aloud"
         private const val MIRROR_REFRESH_INTERVAL_MS = 33L  // ~30 fps
+        private const val SBS_DIVIDER_WIDTH_PX = 2
+        private const val REQUEST_NOTIFICATION_PERMISSION = 1001
     }
 }
+
+
+
+
+
 

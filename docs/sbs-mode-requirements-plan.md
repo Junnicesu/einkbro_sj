@@ -15,7 +15,7 @@ Provide a low-latency SBS browsing experience by rendering browser content once 
 - `FullscreenVideoSbs`:
   - `FULLSCREEN_VIDEO_NORMAL2D`: duplicate left-frame content to right pane.
   - `FULLSCREEN_VIDEO_HBS`: do not duplicate; let the player show native half-SBS channels.
-- `inwardMarginPx`: black center-safe margins near the pane split to improve lens-edge readability.
+- `safeMarginPx`: black safe margins on the outer left/right screen edges to improve lens-edge readability.
 
 ## 3. Requirements
 
@@ -25,9 +25,10 @@ Provide a low-latency SBS browsing experience by rendering browser content once 
 2. Left pane is interactive and rendered from the real browser view tree.
 3. Right pane is a visual-only copy; right-side touches are consumed.
 4. Copy is identical and non-flipped.
-5. Symmetric black inward margins are applied around the center split.
-6. Browser copy must not use `PixelCopy` or bitmap capture loops.
-7. No independent right-pane controls are required.
+5. Symmetric black safe margins are applied at the outer left/right edges.
+6. A thin 2 px gray divider is shown at the exact center between panes.
+7. Browser copy must not use `PixelCopy` or bitmap capture loops.
+8. No independent right-pane controls are required.
 
 ### 3.2 Fullscreen video behavior
 
@@ -53,7 +54,7 @@ Provide a low-latency SBS browsing experience by rendering browser content once 
 
 1. In `BrowserSbsCopy`, left pane is fully usable and right pane follows with no noticeable copy latency.
 2. Right pane is non-flipped and non-interactive.
-3. Center inward margins appear black on both panes.
+3. Outer-edge safe margins appear black on both sides and a 2 px gray center divider is visible.
 4. Fullscreen Normal2D still duplicates to both panes.
 5. Fullscreen HBS still shows proper per-eye channels (no full-frame duplication).
 6. Enter/exit fullscreen preserves SBS state transitions without stale overlays/listeners.
@@ -67,7 +68,8 @@ Provide a low-latency SBS browsing experience by rendering browser content once 
 2. Host `ActivityMainBinding.root` inside this container in `BrowserActivity.onCreate`.
 3. Implement dual-draw logic:
    - draw child once in left pane,
-   - draw center black margins,
+   - draw outer-edge black safe margins,
+   - draw a fixed 2 px gray center divider,
    - draw identical copy in right pane.
 4. Consume right-pane touch events so only left pane is operable.
 

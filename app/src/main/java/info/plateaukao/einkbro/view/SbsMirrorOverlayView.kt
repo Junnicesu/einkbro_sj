@@ -11,33 +11,29 @@ import android.view.View
 
 /**
  * An overlay view that covers the right half of the screen and draws
- * an identical copy of the left-half browser content for SBS (Side-By-Side) mode.
+ * a horizontally-mirrored bitmap of the left half content for SBS (Side-By-Side) mode.
  *
- * The captured bitmap spans [0, halfWidth - inwardMarginPx] of the left pane.
- * When drawn, it is placed at [inwardMarginPx, halfWidth] inside this overlay so
- * a black inward margin of [inwardMarginPx] appears on the inner (left) edge of the
- * right eye pane — symmetrically matching the black bar on the right edge of the
- * left pane.  No horizontal flip is applied; the content is an identical copy.
+ * The left inward margin is baked into the captured bitmap (captured area is
+ * [0, halfWidth - inwardMarginPx], so the black margin bar on the left half's
+ * inner edge appears on the right edge when mirrored → appears on the LEFT edge
+ * of the mirrored image, providing the right eye's inward margin automatically).
  */
-class SbsCopyOverlayView(context: Context) : View(context) {
+class SbsMirrorOverlayView(context: Context) : View(context) {
 
     private val bgPaint = Paint().apply { color = Color.BLACK; style = Paint.Style.FILL }
-    private var copyBitmap: Bitmap? = null
+    private var mirrorBitmap: Bitmap? = null
     private val bitmapLock = Any()
-
-    /** Inward margin in pixels — must match the value used during capture. */
-    var inwardMarginPx: Int = 0
 
     // Pre-allocated to avoid allocations during draw
     private val srcRect = Rect()
     private val dstRect = RectF()
 
-    /** Update the bitmap to display. The view takes ownership and will recycle the old one. */
-    fun updateCopyBitmap(bmp: Bitmap) {
+    /** Update the bitmap to display. The view takes ownership and will recycle it. */
+    fun updateMirrorBitmap(bmp: Bitmap) {
         val oldBitmap: Bitmap?
         synchronized(bitmapLock) {
-            oldBitmap = copyBitmap
-            copyBitmap = bmp
+            oldBitmap = mirrorBitmap
+            mirrorBitmap = bmp
         }
         oldBitmap?.recycle()
         postInvalidate()
@@ -47,26 +43,23 @@ class SbsCopyOverlayView(context: Context) : View(context) {
     fun release() {
         val bmp: Bitmap?
         synchronized(bitmapLock) {
-            bmp = copyBitmap
-            copyBitmap = null
+            bmp = mirrorBitmap
+            mirrorBitmap = null
         }
         bmp?.recycle()
     }
 
     override fun onDraw(canvas: Canvas) {
-        // Black background for the entire right half (covers inward margin + any remainder)
+        // Black background for the entire right half
         canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), bgPaint)
 
         val bmp: Bitmap?
-        synchronized(bitmapLock) { bmp = copyBitmap }
+        synchronized(bitmapLock) { bmp = mirrorBitmap }
 
         bmp?.let { bitmap ->
             if (!bitmap.isRecycled) {
                 srcRect.set(0, 0, bitmap.width, bitmap.height)
-                // Offset dst by inwardMarginPx so the inner edge of the right pane is black.
-                // The bitmap width equals (overlayWidth - inwardMarginPx), giving a 1:1 pixel
-                // mapping (no stretching).
-                dstRect.set(inwardMarginPx.toFloat(), 0f, width.toFloat(), height.toFloat())
+                dstRect.set(0f, 0f, width.toFloat(), height.toFloat())
                 canvas.drawBitmap(bitmap, srcRect, dstRect, null)
             }
         }

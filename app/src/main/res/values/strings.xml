@@ -630,6 +630,8 @@
     <string name="suggestion">"Search: "</string>
     <string name="setting_title_search_suggestion">Search suggestions</string>
     <string name="setting_summary_search_suggestion">"while inputting content, show search suggestions "</string>
+    <string name="setting_title_sbs_outer_margin">SBS outer edge margin</string>
+    <string name="setting_summary_sbs_outer_margin">Left/right safe margin in dp for SBS mode, default is 45</string>
 
     <!-- SBS (Side-by-Side) Cardboard mode -->
     <string name="browser_sbs_mode">SBS Mode</string>

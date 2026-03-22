@@ -419,6 +419,12 @@ class SettingActivity : FragmentActivity() {
             R.string.setting_summary_reader_mode_padding,
             config::paddingForReaderMode
         ),
+        ValueSettingItem(
+            R.string.setting_title_sbs_outer_margin,
+            0,
+            R.string.setting_summary_sbs_outer_margin,
+            config::sbsInwardMarginDp,
+        ),
         ListSettingWithEnumItem(
             R.string.dark_mode,
             0,

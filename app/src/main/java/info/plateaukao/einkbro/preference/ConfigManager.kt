@@ -100,7 +100,7 @@ class ConfigManager(
     var enableVideoPip by BooleanPreference(sp, K_ENABLE_VIDEO_PIP, false)
     var videoCompressedMode by BooleanPreference(sp, K_VIDEO_COMPRESSED, false)
     var sbsMirrorMode by BooleanPreference(sp, K_SBS_MIRROR_MODE, false)
-    var sbsInwardMarginDp by IntPreference(sp, K_SBS_INWARD_MARGIN_DP, 12)
+    var sbsInwardMarginDp by IntPreference(sp, K_SBS_INWARD_MARGIN_DP, 45)
     var autoUpdateAdblock by BooleanPreference(sp, K_AUTO_UPDATE_ADBLOCK, false)
     var enableCertificateErrorDialog by BooleanPreference(sp, CERTIFICATE_ERROR_DIALOG, true)
     var closeTabWhenNoMoreBackHistory by BooleanPreference(sp, K_CLOSE_TAB_WHEN_BACK, true)
