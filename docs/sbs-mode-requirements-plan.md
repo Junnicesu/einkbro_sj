@@ -1,114 +1,112 @@
 # SBS Mode Requirements Plan
 
-This document defines requirements and an implementation plan for Side-by-Side (SBS) modes used by the application (browser viewing in Google Cardboard and fullscreen video playback for both normal 2D and HBS sources).
+This document defines requirements and implementation steps for Side-by-Side (SBS) modes used by the app:
+
+- Browser SBS copy mode for Google Cardboard browsing.
+- Fullscreen video SBS mode for Normal2D and HBS sources.
 
 ## 1. Purpose
 
-Provide precise behavior and acceptance criteria for two SBS-related modes:
-
-- `BrowserSbsMirror`: duplicate browser content for left and right eye panes (Cardboard-style).
-- `FullscreenVideoSbs`: fullscreen video rendering mode that handles both Normal 2D and HBS (half-side-by-side) sources.
+Provide a low-latency SBS browsing experience by rendering browser content once and duplicating it in the same draw pass, while preserving existing fullscreen video behavior.
 
 ## 2. Definitions
 
-- `BrowserSbsMirror`: Browser content is duplicated to left and right eye panes.
-- `FullscreenVideoSbs`: Fullscreen video rendering mode.
-- `Normal2D`: A standard non-SBS video source (single full-frame image for both eyes).
-- `HBS`: Half-SBS — a frame that contains left and right eye channels side-by-side (left half + right half).
+- `BrowserSbsCopy`: browser UI is interactive in the left pane; right pane is a non-interactive identical copy (not flipped).
+- `FullscreenVideoSbs`:
+  - `FULLSCREEN_VIDEO_NORMAL2D`: duplicate left-frame content to right pane.
+  - `FULLSCREEN_VIDEO_HBS`: do not duplicate; let the player show native half-SBS channels.
+- `inwardMarginPx`: black center-safe margins near the pane split to improve lens-edge readability.
 
 ## 3. Requirements
 
 ### 3.1 Browser SBS (Cardboard usability)
 
-1. In browser SBS mode, render duplicated browser content for both eyes.
-2. Apply inward safe margins so important content is kept away from the lens-edge blur.
-3. Use one shared interaction layer (touch/cursor logic remains a single source).
-4. No per-eye independent browser controls are required in phase 1.
+1. Browser SBS uses a custom container (`SbsDualRenderContainer`) that draws browser content twice in one render pass.
+2. Left pane is interactive and rendered from the real browser view tree.
+3. Right pane is a visual-only copy; right-side touches are consumed.
+4. Copy is identical and non-flipped.
+5. Symmetric black inward margins are applied around the center split.
+6. Browser copy must not use `PixelCopy` or bitmap capture loops.
+7. No independent right-pane controls are required.
 
 ### 3.2 Fullscreen video behavior
 
-1. On fullscreen enter, switch from `BrowserSbsMirror` to `FullscreenVideoSbs`.
-2. Detect source layout and apply the appropriate render policy:
-   - If source is `Normal2D`: send the full frame to both eyes.
-   - If source is `HBS`: split the frame by half width and map each half to its corresponding eye.
-3. In `HBS`, do not mirror the whole frame to both eyes.
-4. On fullscreen exit, always return to `BrowserSbsMirror` with inward margins restored.
+1. Entering fullscreen from `BrowserSbsCopy` transitions to fullscreen SBS state.
+2. Normal2D: keep the existing fullscreen `PixelCopy` overlay path.
+3. HBS: hide fullscreen copy overlay; rely on source channel layout.
+4. Runtime toggle between Normal2D and HBS remains available.
+5. Exiting fullscreen restores `BrowserSbsCopy` and re-enables container dual-render.
 
 ### 3.3 Detection rules (initial)
 
-1. Primary heuristic: aspect ratio near 2:1 indicates an HBS candidate.
-2. Allow manual override in settings if the heuristic is wrong.
-3. Keep detection logic isolated for future metadata-based improvements.
+1. `config.videoCompressedMode == true` acts as the initial HBS heuristic.
+2. Manual override via fullscreen SBS/HBS toggle button remains required.
+3. Detection logic remains isolated for future metadata-driven detection.
 
 ## 4. Non-Goals (phase 1)
 
-- Lens distortion correction pipeline
-- Independent per-eye interactive browser UI
-- Advanced head tracking or stereoscopic scene rendering
+- Lens distortion correction.
+- Independent per-eye browser interaction.
+- Head-tracking stereo scene rendering.
 
 ## 5. Acceptance Criteria
 
-1. Browser SBS keeps readable content in a centered safe area for both eyes.
-2. Fullscreen normal videos appear identical in both eyes.
-3. Fullscreen HBS videos show correct left/right channel separation (one channel per eye).
-4. Exiting fullscreen reliably restores browser SBS mirror mode.
-5. No regression to existing EInkBro fullscreen SBS video playback behavior.
+1. In `BrowserSbsCopy`, left pane is fully usable and right pane follows with no noticeable copy latency.
+2. Right pane is non-flipped and non-interactive.
+3. Center inward margins appear black on both panes.
+4. Fullscreen Normal2D still duplicates to both panes.
+5. Fullscreen HBS still shows proper per-eye channels (no full-frame duplication).
+6. Enter/exit fullscreen preserves SBS state transitions without stale overlays/listeners.
+7. Exiting browser SBS restores normal full-width browsing.
 
-## 6. Implementation Plan
+## 6. Implementation Plan (v3)
 
-### Phase 1 — Mode state machine
+### Phase 1 - Browser renderer migration
 
-1. Add mode enums:
-   - `SbsMode`: `BrowserSbsMirror`, `FullscreenVideoSbs`
-   - `VideoLayout`: `Normal2D`, `Hbs`
-2. Add a central controller to own mode transitions.
+1. Add `SbsDualRenderContainer` (`app/src/main/java/info/plateaukao/einkbro/view/SbsDualRenderContainer.kt`).
+2. Host `ActivityMainBinding.root` inside this container in `BrowserActivity.onCreate`.
+3. Implement dual-draw logic:
+   - draw child once in left pane,
+   - draw center black margins,
+   - draw identical copy in right pane.
+4. Consume right-pane touch events so only left pane is operable.
 
-### Phase 2 — Browser SBS renderer
+### Phase 2 - Browser mode transitions
 
-1. Implement inward margin viewport math for both eye panes.
-2. Keep shared input mapping from screen coordinates to a single web coordinate space.
+1. `enterBrowserSbsMode()` enables container SBS copy with configured inward margin.
+2. `exitBrowserSbsMode()` disables container SBS copy.
+3. Remove browser-mode dependency on `PixelCopy` refresh loops.
 
-### Phase 3 — Fullscreen integration
+### Phase 3 - Fullscreen mode continuity
 
-1. Hook into fullscreen lifecycle (show/hide custom view).
-2. On enter fullscreen:
-   - classify video layout
-   - apply render policy (duplicate full frame or split HBS frame)
-3. On exit fullscreen:
-   - stop fullscreen SBS renderer
-   - restore browser SBS mirror renderer
+1. Keep fullscreen Normal2D copy path (`SbsCopyOverlayView` + `PixelCopy`).
+2. Keep fullscreen HBS overlay-off path.
+3. Keep runtime fullscreen toggle and transition handlers:
+   - `handleSbsOnShowCustomView()`
+   - `handleSbsOnHideCustomView()`
+   - `toggleSbsVideoHbsMode()`
 
-### Phase 4 — Settings and fallback
+### Phase 4 - Validation
 
-1. Add tunables:
-   - horizontal inset
-   - vertical inset
-   - HBS manual override
-2. Persist settings and apply at runtime.
-
-### Phase 5 — Validation
-
-1. Create a test matrix including:
-   - Browser pages (text-heavy, image-heavy)
-   - Normal fullscreen videos
-   - HBS fullscreen videos
-   - Repeated enter/exit fullscreen sequences
-2. Verify there is no incorrect double-channel-in-one-lens output for HBS.
+1. Browser pages: verify full usability and low-latency right copy.
+2. Cursor/mouse: verify right copy tracks left without capture lag.
+3. Fullscreen Normal2D/HBS: verify no regression.
+4. Pause/resume and repeated fullscreen enter/exit: verify no leaked refresh tasks/overlays.
 
 ## 7. Risks and Mitigations
 
-- False HBS detection — Mitigation: manual override toggle.
-- Device/headset variation — Mitigation: configurable inward margins.
-- Fullscreen integration regressions — Mitigation: explicit mode transition tests.
+- Extra overdraw from dual-dispatch: acceptable tradeoff for latency reduction; bounded by e-ink refresh constraints.
+- Fullscreen still uses `PixelCopy`: intentionally scoped to video mode where container dual-draw is not guaranteed for surface-backed content.
+- Layout/input regressions: right-pane input is explicitly swallowed by container.
 
 ## 8. Deliverables
 
-1. SBS mode state machine implementation
-2. Browser inward margin rendering
-3. Fullscreen video layout switch (Normal2D vs HBS)
-4. Settings UI for inset and layout override
-5. Test checklist and pass report
+1. `SbsDualRenderContainer` in app view layer.
+2. `BrowserActivity` integration using container-hosted content.
+3. Browser SBS state transitions updated for container mode.
+4. Fullscreen SBS/HBS path preserved.
+5. Validation checklist execution.
 
 ---
 
-(End of plan)
+(End of plan — v3, updated after initial implementation review)
