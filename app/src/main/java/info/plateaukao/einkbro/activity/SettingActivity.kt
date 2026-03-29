@@ -420,10 +420,16 @@ class SettingActivity : FragmentActivity() {
             config::paddingForReaderMode
         ),
         ValueSettingItem(
-            R.string.setting_title_sbs_outer_margin,
+            R.string.setting_title_sbs_left_outer_margin,
             0,
-            R.string.setting_summary_sbs_outer_margin,
-            config::sbsInwardMarginDp,
+            R.string.setting_summary_sbs_left_outer_margin,
+            config::sbsLeftSafeMarginDp,
+        ),
+        ValueSettingItem(
+            R.string.setting_title_sbs_right_outer_margin,
+            0,
+            R.string.setting_summary_sbs_right_outer_margin,
+            config::sbsRightSafeMarginDp,
         ),
         ListSettingWithEnumItem(
             R.string.dark_mode,

@@ -14,10 +14,8 @@ import android.view.ViewGroup
  * Hosts the normal browser content as child 0 and, when enabled, draws that same
  * child twice in one render pass (left eye + right eye copy) without bitmap capture.
  *
- * No inward margin is applied: the left pane occupies [0, w/2] and the right pane
- * occupies [w/2, w].  Both panes start exactly at their respective left edges, so
- * the content viewport origin (x=0 of the child) is at the left edge of each pane —
- * ensuring perfect optical alignment through Google Cardboard lenses.
+ * Left/right edge safe margins are supported independently so users can align with
+ * different headset optics while keeping pane origins stable.
  */
 class SbsDualRenderContainer @JvmOverloads constructor(
     context: Context,
@@ -26,7 +24,8 @@ class SbsDualRenderContainer @JvmOverloads constructor(
 ) : ViewGroup(context, attrs, defStyleAttr) {
 
     private var sbsCopyEnabled = false
-    private var edgeSafeMarginPx = 30
+    private var leftEdgeSafeMarginPx = 45
+    private var rightEdgeSafeMarginPx = 45
     private var centerDividerPx = 2
     private val dividerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.GRAY
@@ -40,11 +39,16 @@ class SbsDualRenderContainer @JvmOverloads constructor(
         invalidate()
     }
 
-    fun setSbsLayout(edgeSafeMarginPx: Int, centerDividerPx: Int = 2) {
-        val newSafe = edgeSafeMarginPx.coerceAtLeast(0)
+    fun setSbsLayout(leftEdgeSafeMarginPx: Int, rightEdgeSafeMarginPx: Int, centerDividerPx: Int = 2) {
+        val newLeftSafe = leftEdgeSafeMarginPx.coerceAtLeast(0)
+        val newRightSafe = rightEdgeSafeMarginPx.coerceAtLeast(0)
         val newDivider = centerDividerPx.coerceAtLeast(0)
-        if (this.edgeSafeMarginPx == newSafe && this.centerDividerPx == newDivider) return
-        this.edgeSafeMarginPx = newSafe
+        if (this.leftEdgeSafeMarginPx == newLeftSafe &&
+            this.rightEdgeSafeMarginPx == newRightSafe &&
+            this.centerDividerPx == newDivider
+        ) return
+        this.leftEdgeSafeMarginPx = newLeftSafe
+        this.rightEdgeSafeMarginPx = newRightSafe
         this.centerDividerPx = newDivider
         requestLayout()
         invalidate()
@@ -63,12 +67,23 @@ class SbsDualRenderContainer @JvmOverloads constructor(
             return SbsMetrics(0, viewWidth, 0, 0, 0)
         }
 
-        val maxSafe = ((viewWidth - centerDividerPx) / 2 - 1).coerceAtLeast(0)
-        val safe = edgeSafeMarginPx.coerceIn(0, maxSafe)
         val divider = centerDividerPx.coerceAtLeast(0)
-        val available = (viewWidth - safe * 2 - divider).coerceAtLeast(2)
+        val maxMarginsTotal = (viewWidth - divider - 2).coerceAtLeast(0)
+        var leftSafe = leftEdgeSafeMarginPx
+        var rightSafe = rightEdgeSafeMarginPx
+        if (leftSafe + rightSafe > maxMarginsTotal) {
+            val overflow = leftSafe + rightSafe - maxMarginsTotal
+            val leftReduction = minOf(leftSafe, (overflow + 1) / 2)
+            val rightReduction = minOf(rightSafe, overflow - leftReduction)
+            leftSafe -= leftReduction
+            rightSafe -= rightReduction
+            if (leftSafe + rightSafe > maxMarginsTotal) {
+                rightSafe = (maxMarginsTotal - leftSafe).coerceAtLeast(0)
+            }
+        }
+        val available = (viewWidth - leftSafe - rightSafe - divider).coerceAtLeast(2)
         val pane = (available / 2).coerceAtLeast(1)
-        val leftStart = safe
+        val leftStart = leftSafe
         val dividerLeft = leftStart + pane
         val rightStart = dividerLeft + divider
         return SbsMetrics(leftStart, pane, rightStart, dividerLeft, divider)

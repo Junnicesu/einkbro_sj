@@ -40,6 +40,10 @@ class ConfigManager(
 ) : KoinComponent {
     private val bookmarkManager: BookmarkManager by inject()
 
+    init {
+        migrateLegacySbsMarginPreference()
+    }
+
     fun registerOnSharedPreferenceChangeListener(listener: SharedPreferences.OnSharedPreferenceChangeListener) {
         sp.registerOnSharedPreferenceChangeListener(listener)
     }
@@ -100,7 +104,15 @@ class ConfigManager(
     var enableVideoPip by BooleanPreference(sp, K_ENABLE_VIDEO_PIP, false)
     var videoCompressedMode by BooleanPreference(sp, K_VIDEO_COMPRESSED, false)
     var sbsMirrorMode by BooleanPreference(sp, K_SBS_MIRROR_MODE, false)
-    var sbsInwardMarginDp by IntPreference(sp, K_SBS_INWARD_MARGIN_DP, 45)
+    var sbsLeftSafeMarginDp by IntPreference(sp, K_SBS_LEFT_SAFE_MARGIN_DP, 45)
+    var sbsRightSafeMarginDp by IntPreference(sp, K_SBS_RIGHT_SAFE_MARGIN_DP, 45)
+    @Deprecated("Use sbsLeftSafeMarginDp and sbsRightSafeMarginDp")
+    var sbsInwardMarginDp: Int
+        get() = sbsLeftSafeMarginDp
+        set(value) {
+            sbsLeftSafeMarginDp = value
+            sbsRightSafeMarginDp = value
+        }
     var autoUpdateAdblock by BooleanPreference(sp, K_AUTO_UPDATE_ADBLOCK, false)
     var enableCertificateErrorDialog by BooleanPreference(sp, CERTIFICATE_ERROR_DIALOG, true)
     var closeTabWhenNoMoreBackHistory by BooleanPreference(sp, K_CLOSE_TAB_WHEN_BACK, true)
@@ -139,6 +151,20 @@ class ConfigManager(
     var showActionMenuIcons by BooleanPreference(sp, K_SHOW_ACTION_MENU_ICONS, true)
     var enableInplaceParagraphTranslate by
     BooleanPreference(sp, K_ENABLE_IN_PLACE_PARAGRAPH_TRANSLATE, true)
+
+    private fun migrateLegacySbsMarginPreference() {
+        if (!sp.contains(K_SBS_INWARD_MARGIN_DP)) return
+
+        val legacyValue = sp.getInt(K_SBS_INWARD_MARGIN_DP, 45)
+        val hasLeft = sp.contains(K_SBS_LEFT_SAFE_MARGIN_DP)
+        val hasRight = sp.contains(K_SBS_RIGHT_SAFE_MARGIN_DP)
+
+        sp.edit {
+            if (!hasLeft) putInt(K_SBS_LEFT_SAFE_MARGIN_DP, legacyValue)
+            if (!hasRight) putInt(K_SBS_RIGHT_SAFE_MARGIN_DP, legacyValue)
+            remove(K_SBS_INWARD_MARGIN_DP)
+        }
+    }
 
     private var originalSaveHistoryMode: SaveHistoryMode? = null
     var isIncognitoMode: Boolean
@@ -949,6 +975,8 @@ class ConfigManager(
         const val K_ENABLE_VIDEO_PIP = "sp_video_auto_pip"
         const val K_VIDEO_COMPRESSED = "sp_video_compressed"
         const val K_SBS_MIRROR_MODE = "sp_sbs_mirror_mode"
+        const val K_SBS_LEFT_SAFE_MARGIN_DP = "sp_sbs_left_safe_margin_dp"
+        const val K_SBS_RIGHT_SAFE_MARGIN_DP = "sp_sbs_right_safe_margin_dp"
         const val K_SBS_INWARD_MARGIN_DP = "sp_sbs_inward_margin_dp"
         const val K_ADBLOCK_HOSTS_URL = "ab_hosts"
         const val K_AUTO_UPDATE_ADBLOCK = "sp_auto_update_adblock"

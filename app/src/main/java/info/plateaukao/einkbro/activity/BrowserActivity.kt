@@ -710,7 +710,7 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
                 if (shouldShow) {
                     val point = actionModeMenuViewModel.clickedPoint.value
                     // when it's first time to show action mode view
-                    // need to wait until width and height is available
+                    // need to wait until width and height are available
                     if (view.width == 0 || view.height == 0) {
                         view.post {
                             ViewUnit.updateViewPosition(view, point)
@@ -1907,6 +1907,16 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
 
                 ConfigManager.K_GPT_ACTION_ITEMS ->
                     actionModeMenuViewModel.updateMenuInfos(this, translationViewModel)
+
+                ConfigManager.K_SBS_LEFT_SAFE_MARGIN_DP,
+                ConfigManager.K_SBS_RIGHT_SAFE_MARGIN_DP,
+                    -> {
+                    when (sbsMode) {
+                        SbsMode.BROWSER_MIRROR -> applyBrowserSbsLayout()
+                        SbsMode.FULLSCREEN_VIDEO_NORMAL2D -> setupSbsOverlayViews()
+                        else -> Unit
+                    }
+                }
             }
         }
 
@@ -3080,13 +3090,25 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
     )
 
     private fun computeSbsGeometry(screenWidth: Int): SbsGeometry {
-        val safeMarginPx = (config.sbsInwardMarginDp * resources.displayMetrics.density).toInt()
+        val leftSafeMarginPx = (config.sbsLeftSafeMarginDp * resources.displayMetrics.density).toInt()
+        val rightSafeMarginPx = (config.sbsRightSafeMarginDp * resources.displayMetrics.density).toInt()
         val dividerWidth = SBS_DIVIDER_WIDTH_PX
-        val maxSafe = ((screenWidth - dividerWidth) / 2 - 1).coerceAtLeast(0)
-        val safe = safeMarginPx.coerceIn(0, maxSafe)
-        val available = (screenWidth - safe * 2 - dividerWidth).coerceAtLeast(2)
+        val maxMarginsTotal = (screenWidth - dividerWidth - 2).coerceAtLeast(0)
+        var leftSafe = leftSafeMarginPx.coerceAtLeast(0)
+        var rightSafe = rightSafeMarginPx.coerceAtLeast(0)
+        if (leftSafe + rightSafe > maxMarginsTotal) {
+            val overflow = leftSafe + rightSafe - maxMarginsTotal
+            val leftReduction = min(leftSafe, (overflow + 1) / 2)
+            val rightReduction = min(rightSafe, overflow - leftReduction)
+            leftSafe -= leftReduction
+            rightSafe -= rightReduction
+            if (leftSafe + rightSafe > maxMarginsTotal) {
+                rightSafe = (maxMarginsTotal - leftSafe).coerceAtLeast(0)
+            }
+        }
+        val available = (screenWidth - leftSafe - rightSafe - dividerWidth).coerceAtLeast(2)
         val paneWidth = (available / 2).coerceAtLeast(1)
-        val leftStart = safe
+        val leftStart = leftSafe
         val dividerLeft = leftStart + paneWidth
         val rightStart = dividerLeft + dividerWidth
         return SbsGeometry(
@@ -3099,8 +3121,9 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
     }
 
     private fun applyBrowserSbsLayout() {
-        val safeMarginPx = (config.sbsInwardMarginDp * resources.displayMetrics.density).toInt()
-        sbsDualRenderContainer?.setSbsLayout(safeMarginPx, SBS_DIVIDER_WIDTH_PX)
+        val leftSafeMarginPx = (config.sbsLeftSafeMarginDp * resources.displayMetrics.density).toInt()
+        val rightSafeMarginPx = (config.sbsRightSafeMarginDp * resources.displayMetrics.density).toInt()
+        sbsDualRenderContainer?.setSbsLayout(leftSafeMarginPx, rightSafeMarginPx, SBS_DIVIDER_WIDTH_PX)
         sbsDualRenderContainer?.setSbsCopyEnabled(true)
     }
 
@@ -3373,9 +3396,5 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
         private const val REQUEST_NOTIFICATION_PERMISSION = 1001
     }
 }
-
-
-
-
 
 
