@@ -211,6 +211,7 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
     private val sbsMirrorHandler = Handler(Looper.getMainLooper())
     private var sbsMirrorRefreshRunning = false
     private var sbsVideoHbsToggleButton: ImageButton? = null
+    private var browserSbsSuspendedForFullscreen = false
 
     // Layouts
     private lateinit var mainContentLayout: FrameLayout
@@ -1226,7 +1227,7 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
             composeToolbarViewController.updateIcons()
             orientation = newConfig.orientation
 
-            if (sbsMode == SbsMode.BROWSER_MIRROR) {
+            if (sbsMode == SbsMode.BROWSER_MIRROR && !browserSbsSuspendedForFullscreen) {
                 applyBrowserSbsLayout()
             } else if (sbsMode == SbsMode.FULLSCREEN_VIDEO_NORMAL2D) {
                 setupSbsOverlayViews()
@@ -2463,17 +2464,21 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
             }
             setOnClickListener { toggleVideoAspectRatio() }
         }
-        fullscreenHolder?.addView(videoAspectRatioButton)
+        // In SBS mode the button is placed on decorView at the left-pane centre by
+        // handleSbsOnShowCustomView(); in normal fullscreen it lives inside fullscreenHolder.
+        if (sbsMode != SbsMode.BROWSER_MIRROR) {
+            fullscreenHolder?.addView(videoAspectRatioButton)
+        }
 
-        // Apply initial compression state
-        if (config.videoCompressedMode) {
+        // Apply initial compression state (only in non-SBS; handleSbsOnShowCustomView handles SBS entry)
+        if (config.videoCompressedMode && sbsMode != SbsMode.BROWSER_MIRROR) {
             applyVideoCompression(true)
         }
 
         customViewCallback = callback
         requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
 
-        // Activate SBS video mode if browser SBS mirror was running
+        // Temporarily suspend browser SBS mirroring while video fullscreen is active.
         if (sbsMode == SbsMode.BROWSER_MIRROR) {
             handleSbsOnShowCustomView()
         }
@@ -2502,17 +2507,19 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
         fullscreenHolder = null
         customView = null
 
+        videoAspectRatioButton?.let { btn -> (btn.parent as? ViewGroup)?.removeView(btn) }
+        videoAspectRatioButton = null
+
         if (videoView != null) {
             videoView?.visibility = GONE
             videoView?.setOnErrorListener(null)
             videoView?.setOnCompletionListener(null)
             videoView = null
         }
-        videoAspectRatioButton = null
         requestedOrientation = originalOrientation
 
-        // Return to browser SBS mirror mode if we were in SBS fullscreen video
-        if (sbsMode == SbsMode.FULLSCREEN_VIDEO_NORMAL2D || sbsMode == SbsMode.FULLSCREEN_VIDEO_HBS) {
+        // Restore browser SBS after leaving fullscreen video.
+        if (browserSbsSuspendedForFullscreen) {
             handleSbsOnHideCustomView()
         }
 
@@ -2522,18 +2529,139 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
     private fun toggleVideoAspectRatio() {
         config.videoCompressedMode = !config.videoCompressedMode
         applyVideoCompression(config.videoCompressedMode)
-
-        // Update button appearance to indicate state
         videoAspectRatioButton?.alpha = if (config.videoCompressedMode) 1.0f else 0.7f
+
+        // When inside SBS fullscreen, also switch between the two sub-modes:
+        //   videoCompressedMode=true  → native SBS video ("ABA'B"): full screen, no mirror
+        //   videoCompressedMode=false → normal 2D video ("ABCD"):   left pane + mirror
+        when (sbsMode) {
+            SbsMode.FULLSCREEN_VIDEO_NORMAL2D -> if (config.videoCompressedMode) {
+                // User flagged this as a native SBS video — show it full screen, no mirror.
+                stopSbsMirrorRefresh()
+                teardownSbsOverlayViews()
+                restoreFullscreenHolderToFullScreen()
+                sbsMode = SbsMode.FULLSCREEN_VIDEO_HBS
+            }
+            SbsMode.FULLSCREEN_VIDEO_HBS -> if (!config.videoCompressedMode) {
+                // Back to normal 2D — constrain to left pane and restart mirror.
+                constrainFullscreenHolderToLeftPane()
+                sbsMode = SbsMode.FULLSCREEN_VIDEO_NORMAL2D
+                setupSbsOverlayViews()
+            }
+            else -> Unit
+        }
+    }
+
+    /**
+     * Called from onShowCustomView when browser SBS mirror is active.
+     *
+     * Mode is determined by videoCompressedMode at entry:
+     *   false → normal 2D  : constrain holder to left pane + activate mirror → "ABCD|ABCD"
+     *   true  → native SBS : full screen width, no mirror                   → "ABA'B" (full)
+     *
+     * The aspect ratio button is placed at the centre-top of the left pane on
+     * the decor view so it stays within the cardboard lens viewing area.
+     */
+    private fun handleSbsOnShowCustomView() {
+        browserSbsSuspendedForFullscreen = true
+        clearBrowserSbsLayout()
+        stopSbsMirrorRefresh()
+        teardownSbsOverlayViews()
+
+        if (config.videoCompressedMode) {
+            // Native SBS video already encodes both eye views — display full screen.
+            sbsMode = SbsMode.FULLSCREEN_VIDEO_HBS
+            // fullscreenHolder stays at MATCH_PARENT; no overlay needed.
+        } else {
+            // Normal 2D video — squeeze into left pane and mirror to right pane.
+            sbsMode = SbsMode.FULLSCREEN_VIDEO_NORMAL2D
+            constrainFullscreenHolderToLeftPane()
+            setupSbsOverlayViews()   // adds overlay bars + mirror; calls bringToFront on each
+        }
+
+        // Place the aspect ratio button at centre-top of the left pane on the
+        // decor view so it is always within the cardboard lens view,
+        // regardless of whether we are in NORMAL2D or HBS sub-mode.
+        positionSbsAspectRatioButton()
+    }
+
+    /** Called from onHideCustomView when returning from SBS fullscreen video mode. */
+    private fun handleSbsOnHideCustomView() {
+        browserSbsSuspendedForFullscreen = false
+        removeSbsHbsToggleButton()
+        stopSbsMirrorRefresh()
+        teardownSbsOverlayViews()
+        sbsMode = SbsMode.BROWSER_MIRROR
+        applyBrowserSbsLayout()
+    }
+
+    /** Shrink fullscreenHolder to occupy only the left SBS pane. */
+    private fun constrainFullscreenHolderToLeftPane() {
+        val decorView = window.decorView as FrameLayout
+        val apply: () -> Unit = {
+            val w = decorView.width
+            if (w > 0) {
+                val geometry = computeSbsGeometry(w)
+                fullscreenHolder?.layoutParams = FrameLayout.LayoutParams(
+                    geometry.paneWidth,
+                    FrameLayout.LayoutParams.MATCH_PARENT
+                ).apply {
+                    gravity = Gravity.TOP or Gravity.START
+                    leftMargin = geometry.leftStart
+                }
+                fullscreenHolder?.requestLayout()
+            }
+        }
+        if (decorView.width > 0) apply() else decorView.post(apply)
+    }
+
+    /** Restore fullscreenHolder to full screen width (undo left-pane constraint). */
+    private fun restoreFullscreenHolderToFullScreen() {
+        fullscreenHolder?.layoutParams = FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.MATCH_PARENT
+        )
+        fullscreenHolder?.requestLayout()
+    }
+
+    /**
+     * Add / reposition the aspect ratio button on the decor view at the
+     * centre-top of the LEFT pane — always within the cardboard lens view,
+     * regardless of whether we are in NORMAL2D or HBS sub-mode.
+     */
+    private fun positionSbsAspectRatioButton() {
+        val button = videoAspectRatioButton ?: return
+        val decorView = window.decorView as FrameLayout
+        val density = resources.displayMetrics.density
+        val sizePx = (48 * density).toInt()
+        val topMarginPx = (16 * density).toInt()
+
+        val place: () -> Unit = {
+            val w = decorView.width
+            if (w > 0) {
+                val geometry = computeSbsGeometry(w)
+                val leftPaneCenterX = geometry.leftStart + geometry.paneWidth / 2
+                button.layoutParams = FrameLayout.LayoutParams(sizePx, sizePx).apply {
+                    gravity = Gravity.TOP or Gravity.START
+                    leftMargin = leftPaneCenterX - sizePx / 2
+                    topMargin = topMarginPx
+                }
+                // Move to decorView if not already there
+                if (button.parent == null) {
+                    decorView.addView(button)
+                } else if (button.parent !== decorView) {
+                    (button.parent as ViewGroup).removeView(button)
+                    decorView.addView(button)
+                }
+                button.bringToFront()   // must be above overlay bars and mirror
+            }
+        }
+        if (decorView.width > 0) place() else decorView.post(place)
     }
 
     private fun applyVideoCompression(compress: Boolean) {
-        // Paint margins black when squashed
         fullscreenHolder?.setBackgroundColor(if (compress) android.graphics.Color.BLACK else android.graphics.Color.TRANSPARENT)
-
-        // Apply vertical squash using scaleY to truly compress height
         val targetScale = if (compress) 0.5f else 1.0f
-        // Prefer scaling the actual video child if present; otherwise scale the customView container
         val container = customView
         if (container is FrameLayout) {
             val child = container.focusedChild ?: (if (container.childCount > 0) container.getChildAt(0) else null)
@@ -2545,7 +2673,6 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
                 pivotY = height / 2f
                 pivotX = width / 2f
                 scaleY = targetScale
-                // keep full width; ensure layout remains match parent to avoid extra letterbox
                 if (layoutParams is FrameLayout.LayoutParams) {
                     val lp = layoutParams as FrameLayout.LayoutParams
                     lp.width = FrameLayout.LayoutParams.MATCH_PARENT
@@ -2568,9 +2695,7 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
     }
 
     private var previousKeyEvent: KeyEvent? = null
-    override fun handleKeyEvent(event: KeyEvent): Boolean {
-        return keyHandler.handleKeyEvent(event)
-    }
+    override fun handleKeyEvent(event: KeyEvent): Boolean = keyHandler.handleKeyEvent(event)
 
     override fun loadInSecondPane(url: String): Boolean =
         if (config.twoPanelLinkHere &&
@@ -2595,7 +2720,6 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
                     "",
                     host,
                 ).show().orEmpty()
-
                 if (domain.isNotBlank()) {
                     config.adSites = config.adSites.apply { add(domain) }
                     ebWebView.reload()
@@ -2618,14 +2742,13 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
     private var longPressPoint: Point = Point(0, 0)
     private var activeContextMenuDialog: ContextMenuDialogFragment? = null
     private var isInLongPressMode = false
+
     override fun onLongPress(message: Message, event: MotionEvent?) {
         if (ebWebView.isSelectingText) return
-
         motionEvent = event
         longPressPoint = Point(event?.x?.toInt() ?: 0, event?.y?.toInt() ?: 0)
         val url = BrowserUnit.getWebViewLinkUrl(ebWebView, message)
         if (url.isNotBlank()) {
-            // case: image or link
             val linkImageUrl = BrowserUnit.getWebViewLinkImageUrl(ebWebView, message)
             BrowserUnit.getWebViewLinkTitle(ebWebView) { linkTitle ->
                 val titleText = linkTitle.ifBlank { url }.toString()
@@ -2659,26 +2782,12 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
                 if (prepareRecord()) EBToast.show(this, getString(R.string.toast_share_failed))
                 else IntentUnit.share(this, title, url)
             }
-
-            ContextMenuItemType.CopyLink -> ShareUtil.copyToClipboard(
-                this,
-                BrowserUnit.stripUrlQuery(url)
-            )
-
-            ContextMenuItemType.SelectText -> ebWebView.post {
-                ebWebView.selectLinkText(longPressPoint)
-            }
-
-            ContextMenuItemType.OpenWith -> HelperUnit.showBrowserChooser(
-                this,
-                url,
-                getString(R.string.menu_open_with)
-            )
-
+            ContextMenuItemType.CopyLink -> ShareUtil.copyToClipboard(this, BrowserUnit.stripUrlQuery(url))
+            ContextMenuItemType.SelectText -> ebWebView.post { ebWebView.selectLinkText(longPressPoint) }
+            ContextMenuItemType.OpenWith -> HelperUnit.showBrowserChooser(this, url, getString(R.string.menu_open_with))
             ContextMenuItemType.SaveBookmark -> saveBookmark(url, title)
             ContextMenuItemType.SplitScreen -> toggleSplitScreen(url)
             ContextMenuItemType.AdBlock -> confirmAdSiteAddition(imageUrl)
-
             ContextMenuItemType.TranslateImage -> translateImage(imageUrl)
             ContextMenuItemType.Tts -> addContentToReadList(url)
             ContextMenuItemType.Summarize -> summarizeLinkContent(url)
@@ -2693,7 +2802,6 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
                     }
                 }
             }
-
             else -> Unit
         }
     }
@@ -2703,14 +2811,8 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
             setOnPageFinishedAction {
                 lifecycleScope.launch {
                     val content = toBeReadWebView.getRawText()
-                    if (content.isNotEmpty()) {
-                        ttsViewModel.readArticle(content)
-                    }
-                    // remove self
-                    if (toBeReadProcessUrlList.isNotEmpty()) {
-                        toBeReadProcessUrlList.removeAt(0)
-                    }
-
+                    if (content.isNotEmpty()) ttsViewModel.readArticle(content)
+                    if (toBeReadProcessUrlList.isNotEmpty()) toBeReadProcessUrlList.removeAt(0)
                     if (toBeReadProcessUrlList.isNotEmpty()) {
                         toBeReadWebView.loadUrl(toBeReadProcessUrlList.removeAt(0))
                     } else {
@@ -2724,18 +2826,14 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
     private var toBeReadProcessUrlList: MutableList<String> = mutableListOf()
     private fun addContentToReadList(url: String) {
         toBeReadProcessUrlList.add(url)
-        if (toBeReadProcessUrlList.size == 1) {
-            toBeReadWebView.loadUrl(url)
-        }
+        if (toBeReadProcessUrlList.size == 1) toBeReadWebView.loadUrl(url)
         EBToast.show(this, R.string.added_to_read_list)
     }
 
     private fun translateWebView() {
         lifecycleScope.launch {
             val base64String = translationViewModel.translateWebView(
-                ebWebView,
-                config.sourceLanguage,
-                config.translationLanguage,
+                ebWebView, config.sourceLanguage, config.translationLanguage,
             )
             if (base64String != null) {
                 val translatedImageHtml = HelperUnit.loadAssetFileToString(
@@ -2758,13 +2856,9 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
     private fun translateImage(url: String) {
         lifecycleScope.launch {
             val base64String = translationViewModel.translateImage(
-                ebWebView.url.orEmpty(),
-                url,
-                TranslationLanguage.KO,
-                config.translationLanguage,
+                ebWebView.url.orEmpty(), url, TranslationLanguage.KO, config.translationLanguage,
             )
             if (base64String != null) {
-                //addAlbum(url = "data:image/png;base64,$it")
                 val translatedImageHtml = HelperUnit.loadAssetFileToString(
                     this@BrowserActivity, "translated_image.html"
                 ).replace("%%", base64String)
@@ -2783,7 +2877,6 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
     }
 
     private fun saveFile(url: String, fileName: String = "") {
-        // handle data url case
         if (url.startsWith("data:image")) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 BrowserUnit.saveImageFromUrl(url, saveImageFilePickerLauncher)
@@ -2792,18 +2885,13 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
             }
             return
         }
-
-        if (HelperUnit.needGrantStoragePermission(this)) {
-            return
-        }
-
+        if (HelperUnit.needGrantStoragePermission(this)) return
         val source = Uri.parse(url)
         val request = Request(source).apply {
             addRequestHeader("Cookie", CookieManager.getInstance().getCookie(url))
             setNotificationVisibility(Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
             setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName)
         }
-
         val dm = (getSystemService(DOWNLOAD_SERVICE) as DownloadManager)
         dm.enqueue(request)
         ViewUnit.hideKeyboard(this)
@@ -2812,7 +2900,6 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
     @SuppressLint("RestrictedApi")
     private fun showToolbar() {
         if (searchOnSite) return
-
         showStatusBar()
         fabImageViewController.hide()
         binding.mainSearchPanel.visibility = INVISIBLE
@@ -2825,11 +2912,8 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
 
     override fun toggleFullscreen() {
         if (searchOnSite) return
-
         if (binding.appBar.visibility == VISIBLE) {
-            if (config.fabPosition != FabPosition.NotShow) {
-                fabImageViewController.show()
-            }
+            if (config.fabPosition != FabPosition.NotShow) fabImageViewController.show()
             binding.mainSearchPanel.visibility = INVISIBLE
             binding.appBar.visibility = GONE
             binding.contentSeparator.visibility = GONE
@@ -2840,9 +2924,7 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
     }
 
     private fun hideSearchPanel() {
-        if (this::ebWebView.isInitialized) {
-            ebWebView.clearMatches()
-        }
+        if (this::ebWebView.isInitialized) ebWebView.clearMatches()
         searchOnSite = false
         ViewUnit.hideKeyboard(this)
         showToolbar()
@@ -2862,7 +2944,6 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
 
     private fun showStatusBar() {
         if (config.hideStatusbar) return
-
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             window.setDecorFitsSystemWindows(true)
             window.insetsController?.show(WindowInsets.Type.statusBars())
@@ -2890,9 +2971,7 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
     }
 
     protected fun readArticle() {
-        lifecycleScope.launch {
-            ttsViewModel.readArticle(ebWebView.getRawText())
-        }
+        lifecycleScope.launch { ttsViewModel.readArticle(ebWebView.getRawText()) }
     }
 
     private val menuActionHandler: MenuActionHandler by lazy { MenuActionHandler(this) }
@@ -2910,8 +2989,7 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
         BrowserUnit.createFilePicker(createWebArchivePickerLauncher, fileName)
     }
 
-    override fun showOpenEpubFilePicker() =
-        epubManager.showOpenEpubFilePicker(openEpubFilePickerLauncher)
+    override fun showOpenEpubFilePicker() = epubManager.showOpenEpubFilePicker(openEpubFilePickerLauncher)
 
     override fun handleTtsButton() {
         if (ttsViewModel.isReading()) {
@@ -2936,65 +3014,46 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
             splitSearchViewModel.reset()
             return
         }
-
         twoPaneController.showSecondPaneWithUrl(url ?: ebWebView.url.orEmpty())
     }
 
     override fun toggleBrowserSbsMode() {
-        if (sbsMode != SbsMode.OFF) {
-            exitBrowserSbsMode()
-        } else {
-            enterBrowserSbsMode()
-        }
+        if (sbsMode != SbsMode.OFF) exitBrowserSbsMode() else enterBrowserSbsMode()
     }
 
     private fun nextAlbumController(next: Boolean): AlbumController? {
-        if (browserContainer.size() <= 1) {
-            return currentAlbumController
-        }
-
+        if (browserContainer.size() <= 1) return currentAlbumController
         val list = browserContainer.list()
         var index = list.indexOf(currentAlbumController)
         if (next) {
             index++
-            if (index >= list.size) {
-                return list.first()
-            }
+            if (index >= list.size) return list.first()
         } else {
             index--
-            if (index < 0) {
-                return list.last()
-            }
+            if (index < 0) return list.last()
         }
         return list[index]
     }
 
     private fun getFocusedWebView(): EBWebView = when {
         ebWebView.hasFocus() -> ebWebView
-        isTwoPaneControllerInitialized() && twoPaneController.getSecondWebView().hasFocus() -> {
+        isTwoPaneControllerInitialized() && twoPaneController.getSecondWebView().hasFocus() ->
             twoPaneController.getSecondWebView()
-        }
-
         else -> ebWebView
     }
 
     private val json = Json {
-        // Configure JSON serializer
         ignoreUnknownKeys = true
-        encodeDefaults = false // Don't encode default values to reduce size
+        encodeDefaults = false
         isLenient = true
     }
 
-    // - action mode handling
     override fun onActionModeStarted(mode: ActionMode) {
         val isTextEditMode = ViewUnit.isTextEditMode(this, mode.menu)
-
-        // check isSendingLink
         if (remoteConnViewModel.isSendingTextSearch && !isTextEditMode) {
             mode.hide(1000000)
             mode.menu.clear()
             mode.finish()
-
             lifecycleScope.launch {
                 val keyword = getFocusedWebView().getSelectedText()
                 val keywordWithContext = getFocusedWebView().getSelectedTextWithContext()
@@ -3010,40 +3069,26 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
             }
             return
         }
-
         if (!config.showDefaultActionMenu && !isTextEditMode && isInSplitSearchMode()) {
             mode.hide(1000000)
             mode.menu.clear()
-
-            lifecycleScope.launch {
-                toggleSplitScreen(splitSearchViewModel.getUrl(ebWebView.getSelectedText()))
-            }
-
+            lifecycleScope.launch { toggleSplitScreen(splitSearchViewModel.getUrl(ebWebView.getSelectedText())) }
             mode.finish()
             return
         }
-
         if (!actionModeMenuViewModel.isInActionMode()) {
             actionModeMenuViewModel.updateActionMode(mode)
-
             if (!config.showDefaultActionMenu && !isTextEditMode) {
                 mode.hide(1000000)
                 mode.menu.clear()
                 mode.finish()
-
                 lifecycleScope.launch {
                     actionModeMenuViewModel.updateSelectedText(HelperUnit.unescapeJava(getFocusedWebView().getSelectedText()))
-                    showActionModeView(translationViewModel) {
-                        getFocusedWebView().removeTextSelection()
-                    }
+                    showActionModeView(translationViewModel) { getFocusedWebView().removeTextSelection() }
                 }
             }
         }
-
-        if (!config.showDefaultActionMenu && !isTextEditMode) {
-            mode.menu.clear()
-        }
-
+        if (!config.showDefaultActionMenu && !isTextEditMode) mode.menu.clear()
         super.onActionModeStarted(mode)
     }
 
@@ -3067,7 +3112,6 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
             actionModeView?.visibility = INVISIBLE
             binding.root.addView(actionModeView)
         }
-
         actionModeMenuViewModel.show()
     }
 
@@ -3076,8 +3120,6 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
         mode?.hide(1000000)
         actionModeMenuViewModel.updateActionMode(null)
     }
-
-    // - action mode handling
 
     // ===================== SBS (Cardboard) Mode =====================
 
@@ -3145,6 +3187,7 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
     private fun exitBrowserSbsMode() {
         config.sbsMirrorMode = false
         sbsMode = SbsMode.OFF
+        browserSbsSuspendedForFullscreen = false
         stopSbsMirrorRefresh()
         teardownSbsOverlayViews()
         clearBrowserSbsLayout()
@@ -3153,35 +3196,21 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
         composeToolbarViewController.updateIcons()
     }
 
-    private fun ensureOverlayBar(
-        current: View?,
-        color: Int,
-        left: Int,
-        width: Int,
-    ): View? {
+    private fun ensureOverlayBar(current: View?, color: Int, left: Int, width: Int): View? {
         val decorView = window.decorView as FrameLayout
         if (width <= 0) {
             current?.let { if (it.parent != null) decorView.removeView(it) }
             return null
         }
-
         val view = (current ?: View(this).apply {
             isClickable = false
             isFocusable = false
-        }).apply {
-            setBackgroundColor(color)
-        }
-
+        }).apply { setBackgroundColor(color) }
         val params = FrameLayout.LayoutParams(width, FrameLayout.LayoutParams.MATCH_PARENT).apply {
             gravity = Gravity.TOP or Gravity.START
             leftMargin = left
         }
-
-        if (view.parent == null) {
-            decorView.addView(view, params)
-        } else {
-            view.layoutParams = params
-        }
+        if (view.parent == null) decorView.addView(view, params) else view.layoutParams = params
         return view
     }
 
@@ -3189,57 +3218,23 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
         val decorView = window.decorView as FrameLayout
         val screenWidth = decorView.width
         if (screenWidth <= 0) {
-            decorView.post {
-                if (sbsMode == SbsMode.FULLSCREEN_VIDEO_NORMAL2D) {
-                    setupSbsOverlayViews()
-                }
-            }
+            decorView.post { if (sbsMode == SbsMode.FULLSCREEN_VIDEO_NORMAL2D) setupSbsOverlayViews() }
             return
         }
         val geometry = computeSbsGeometry(screenWidth)
-
-        sbsLeftSafeMarginBar = ensureOverlayBar(
-            current = sbsLeftSafeMarginBar,
-            color = android.graphics.Color.BLACK,
-            left = 0,
-            width = geometry.leftStart,
-        )
-
+        sbsLeftSafeMarginBar = ensureOverlayBar(sbsLeftSafeMarginBar, android.graphics.Color.BLACK, 0, geometry.leftStart)
         val rightSafeWidth = (screenWidth - (geometry.rightStart + geometry.paneWidth)).coerceAtLeast(0)
-        sbsRightSafeMarginBar = ensureOverlayBar(
-            current = sbsRightSafeMarginBar,
-            color = android.graphics.Color.BLACK,
-            left = geometry.rightStart + geometry.paneWidth,
-            width = rightSafeWidth,
-        )
-
-        sbsCenterDividerBar = ensureOverlayBar(
-            current = sbsCenterDividerBar,
-            color = android.graphics.Color.GRAY,
-            left = geometry.dividerLeft,
-            width = geometry.dividerWidth,
-        )
-
+        sbsRightSafeMarginBar = ensureOverlayBar(sbsRightSafeMarginBar, android.graphics.Color.BLACK, geometry.rightStart + geometry.paneWidth, rightSafeWidth)
+        sbsCenterDividerBar = ensureOverlayBar(sbsCenterDividerBar, android.graphics.Color.GRAY, geometry.dividerLeft, geometry.dividerWidth)
         if (sbsMirrorOverlay == null) {
-            sbsMirrorOverlay = SbsMirrorOverlayView(this).apply {
-                isClickable = true
-                isFocusable = false
-            }
+            sbsMirrorOverlay = SbsMirrorOverlayView(this).apply { isClickable = true; isFocusable = false }
         }
-
-        val overlayParams = FrameLayout.LayoutParams(
-            geometry.paneWidth,
-            FrameLayout.LayoutParams.MATCH_PARENT,
-        ).apply {
+        val overlayParams = FrameLayout.LayoutParams(geometry.paneWidth, FrameLayout.LayoutParams.MATCH_PARENT).apply {
             gravity = Gravity.TOP or Gravity.START
             leftMargin = geometry.rightStart
         }
-        if (sbsMirrorOverlay?.parent == null) {
-            decorView.addView(sbsMirrorOverlay, overlayParams)
-        } else {
-            sbsMirrorOverlay?.layoutParams = overlayParams
-        }
-
+        if (sbsMirrorOverlay?.parent == null) decorView.addView(sbsMirrorOverlay, overlayParams)
+        else sbsMirrorOverlay?.layoutParams = overlayParams
         sbsLeftSafeMarginBar?.bringToFront()
         sbsRightSafeMarginBar?.bringToFront()
         sbsCenterDividerBar?.bringToFront()
@@ -3249,10 +3244,7 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
 
     private fun teardownSbsOverlayViews() {
         val decorView = window.decorView as FrameLayout
-        sbsMirrorOverlay?.let { v ->
-            v.release()
-            if (v.parent != null) decorView.removeView(v)
-        }
+        sbsMirrorOverlay?.let { v -> v.release(); if (v.parent != null) decorView.removeView(v) }
         sbsMirrorOverlay = null
         sbsLeftSafeMarginBar?.let { v -> if (v.parent != null) decorView.removeView(v) }
         sbsRightSafeMarginBar?.let { v -> if (v.parent != null) decorView.removeView(v) }
@@ -3276,9 +3268,7 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
     private val sbsMirrorRunnable: Runnable = object : Runnable {
         override fun run() {
             if (!sbsMirrorRefreshRunning) return
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                captureAndUpdateSbsMirror()
-            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) captureAndUpdateSbsMirror()
             sbsMirrorHandler.postDelayed(this, MIRROR_REFRESH_INTERVAL_MS)
         }
     }
@@ -3290,59 +3280,25 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
         val sw = decorView.width
         val sh = decorView.height
         if (sw <= 0 || sh <= 0) return
-
         val geometry = computeSbsGeometry(sw)
         val captureWidth = geometry.paneWidth
         val captureLeft = geometry.leftStart
-
         val bitmap = Bitmap.createBitmap(captureWidth, sh, Bitmap.Config.ARGB_8888)
         PixelCopy.request(
             window,
             Rect(captureLeft, 0, captureLeft + captureWidth, sh),
             bitmap,
             { result ->
-                if (result == PixelCopy.SUCCESS) {
-                    // Keep right pane as a direct copy, not a mirrored image.
-                    overlay.updateMirrorBitmap(bitmap)
-                } else {
-                    bitmap.recycle()
-                }
+                if (result == PixelCopy.SUCCESS) overlay.updateMirrorBitmap(bitmap)
+                else bitmap.recycle()
             },
             Handler(Looper.getMainLooper())
         )
     }
 
-    /** Called from onShowCustomView when browser SBS mirror is active. */
-    private fun handleSbsOnShowCustomView() {
-        clearBrowserSbsLayout()
-        stopSbsMirrorRefresh()
-        // Use videoCompressedMode as proxy: squash=ON likely means HBS content
-        val isHbs = config.videoCompressedMode
-        if (isHbs) {
-            sbsMode = SbsMode.FULLSCREEN_VIDEO_HBS
-            teardownSbsOverlayViews()
-            EBToast.show(this, R.string.sbs_fullscreen_hbs)
-        } else {
-            sbsMode = SbsMode.FULLSCREEN_VIDEO_NORMAL2D
-            setupSbsOverlayViews()
-            EBToast.show(this, R.string.sbs_fullscreen_normal2d)
-        }
-        addSbsHbsToggleButton()
-    }
-
-    /** Called from onHideCustomView when returning from SBS fullscreen video mode. */
-    private fun handleSbsOnHideCustomView() {
-        removeSbsHbsToggleButton()
-        stopSbsMirrorRefresh()
-        teardownSbsOverlayViews()
-        sbsMode = SbsMode.BROWSER_MIRROR
-        applyBrowserSbsLayout()
-    }
-
     private fun addSbsHbsToggleButton() {
         val decorView = window.decorView as FrameLayout
-        val iconRes = if (sbsMode == SbsMode.FULLSCREEN_VIDEO_HBS)
-            R.drawable.ic_sbs_mode_active else R.drawable.ic_aspect_ratio
+        val iconRes = if (sbsMode == SbsMode.FULLSCREEN_VIDEO_HBS) R.drawable.ic_sbs_mode_active else R.drawable.ic_aspect_ratio
         val density = resources.displayMetrics.density
         val sizePx = (48 * density).toInt()
         val marginPx = (8 * density).toInt()
@@ -3353,7 +3309,6 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
             alpha = 0.85f
             layoutParams = FrameLayout.LayoutParams(sizePx, sizePx).apply {
                 gravity = Gravity.TOP or Gravity.START
-                // Position below the aspect-ratio button (which is at top+margin)
                 setMargins(marginPx, marginPx + sizePx + marginPx, marginPx, marginPx)
             }
             setOnClickListener { toggleSbsVideoHbsMode() }
@@ -3396,5 +3351,4 @@ open class BrowserActivity : FragmentActivity(), BrowserController {
         private const val REQUEST_NOTIFICATION_PERMISSION = 1001
     }
 }
-
 
